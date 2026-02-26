@@ -1,0 +1,72 @@
+"use client";
+
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Cell,
+} from "recharts";
+interface DataPoint { date: string; leads: number; }
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-lg">
+        <p className="text-xs font-medium text-gray-500 mb-1">{label}</p>
+        <p className="text-sm font-bold text-gray-900">
+          {payload[0].value}{" "}
+          <span className="text-xs font-normal text-gray-400">leads</span>
+        </p>
+      </div>
+    );
+  }
+  return null;
+};
+
+export function LeadsChart({ data }: { data: DataPoint[] }) {
+  const maxValue = data.length ? Math.max(...data.map((d: DataPoint) => d.leads)) : 0;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-card">
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">Leads per Day</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Last 7 days</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5">
+          <div className="h-2 w-2 rounded-full bg-violet-500" />
+          <span className="text-xs font-medium text-gray-600">New Leads</span>
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }} barSize={28}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+          <XAxis
+            dataKey="date"
+            tick={{ fontSize: 11, fill: "#9ca3af" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: "#9ca3af" }}
+            axisLine={false}
+            tickLine={false}
+          />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: "#f8fafc" }} />
+          <Bar dataKey="leads" radius={[6, 6, 0, 0]}>
+            {data.map((entry: DataPoint, index: number) => (
+              <Cell
+                key={`cell-${index}`}
+                fill={entry.leads === maxValue ? "#7c3aed" : "#a78bfa"}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
