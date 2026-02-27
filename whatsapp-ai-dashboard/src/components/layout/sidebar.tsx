@@ -15,9 +15,14 @@ import {
   Bot,
   Circle,
   LogOut,
-  ShieldCheck,
   LifeBuoy,
   UserCircle,
+  Building2,
+  Package,
+  CreditCard,
+  ScrollText,
+  Megaphone,
+  BarChart3,
 } from "lucide-react";
 
 interface NavItem {
@@ -37,7 +42,14 @@ const navItems: NavItem[] = [
 ];
 
 const adminNavItems: NavItem[] = [
-  { label: "Platform Admin", href: "/platform", icon: ShieldCheck },
+  { label: "Overview",      href: "/platform",               icon: LayoutDashboard },
+  { label: "Businesses",    href: "/platform/businesses",    icon: Building2       },
+  { label: "Packages",      href: "/platform/packages",      icon: Package         },
+  { label: "Credits",       href: "/platform/credits",       icon: CreditCard      },
+  { label: "Audit Logs",    href: "/platform/audit",         icon: ScrollText      },
+  { label: "Support",       href: "/platform/support",       icon: LifeBuoy        },
+  { label: "Announcements", href: "/platform/announcements", icon: Megaphone       },
+  { label: "Analytics",     href: "/platform/analytics",     icon: BarChart3       },
 ];
 
 interface SidebarProps {
@@ -151,11 +163,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <>
             {!collapsed && (
               <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                Platform
+                Platform Admin
               </p>
             )}
             {adminNavItems.map((item) => {
-              const isActive = pathname === item.href;
+              const isActive =
+                item.href === '/platform'
+                  ? pathname === '/platform'
+                  : pathname === item.href || pathname.startsWith(item.href + '/');
               const Icon = item.icon;
               return (
                 <Link

@@ -412,6 +412,69 @@ async function replyToSupport(req, res, next) {
   }
 }
 
+// ─── POST /api/super-admin/businesses ─────────────────────────────────────────
+
+async function createBusiness(req, res, next) {
+  const conn = await pool.getConnection();
+  try {
+    const { name, email, password, package: pkg, initial_credits } = req.body;
+
+    if (!name || !email || !password) {
+      return fail(res, 'name, email and password are required.', 400);
+    }
+    if (password.length < 8) {
+      return fail(res, 'Password must be at least 8 characters.', 400);
+    }
+    const validPkg = ['none', 'basic', 'pro', 'trial'];
+    const chosenPkg = validPkg.includes(pkg) ? pkg : 'none';
+    const credits = parseFloat(initial_credits) || 0;
+
+    const bcrypt = require('bcryptjs');
+    const hashed = await bcrypt.hash(password, 10);
+
+    await conn.beginTransaction();
+
+    const [bizResult] = await conn.query(
+      `INSERT INTO businesses (name, status, package, credit_balance)
+       VALUES (?, 'active', ?, ?)`,
+      [name.trim(), chosenPkg, credits]
+    );
+    const bizId = bizResult.insertId;
+
+    await conn.query(
+      `INSERT INTO users (email, password, role, status, business_id)
+       VALUES (?, ?, 'manager', 'active', ?)`,
+      [email.trim().toLowerCase(), hashed, bizId]
+    );
+
+    if (credits > 0) {
+      await conn.query(
+        "INSERT INTO credit_transactions (business_id, admin_id, type, amount, notes) VALUES (?, ?, 'approve_grant', ?, ?)",
+        [bizId, req.user.id, credits, `Initial grant on manual creation`]
+      );
+    }
+
+    await conn.commit();
+
+    await audit(req.user.id, `CREATED_BUSINESS #${bizId} (${name}) pkg=${chosenPkg} credits=${credits}`, bizId);
+
+    const [[created]] = await pool.query(
+      `SELECT b.id, b.name AS business_name, b.status, b.package, b.credit_balance AS credits_remaining,
+              u.email AS owner_email
+       FROM businesses b LEFT JOIN users u ON u.business_id = b.id AND u.role = 'manager'
+       WHERE b.id = ? LIMIT 1`,
+      [bizId]
+    );
+
+    return send(res, { business: created }, 'Business created successfully.');
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+}
+
 // ─── GET /api/super-admin/packages ────────────────────────────────────────────
 
 async function getPackagePlans(req, res, next) {
@@ -457,6 +520,48 @@ async function updatePackagePlan(req, res, next) {
   }
 }
 
+// ─── POST /api/super-admin/packages ───────────────────────────────────────────
+
+async function createPackagePlan(req, res, next) {
+  try {
+    const { name, monthly_price, credit_limit, description } = req.body;
+    if (!name || !name.trim()) return fail(res, 'Plan name is required.', 400);
+
+    const planName = name.trim().toLowerCase().replace(/\s+/g, '_');
+
+    await pool.query(
+      `INSERT INTO package_plans (name, monthly_price, credit_limit, description) VALUES (?, ?, ?, ?)`,
+      [planName, parseFloat(monthly_price) || 0, parseInt(credit_limit) || 0, description || '']
+    );
+
+    const [[created]] = await pool.query('SELECT * FROM package_plans WHERE name = ? LIMIT 1', [planName]);
+    await audit(req.user.id, `CREATED package plan: ${planName} price=$${monthly_price} credits=${credit_limit}`, null);
+    return send(res, { package: created }, 'Package plan created.');
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── DELETE /api/super-admin/packages/:name ────────────────────────────────────
+
+async function deletePackagePlan(req, res, next) {
+  try {
+    const { name } = req.params;
+    const [[{ count }]] = await pool.query(
+      'SELECT COUNT(*) AS count FROM businesses WHERE package = ?', [name]
+    );
+    if (Number(count) > 0) {
+      return fail(res, `Cannot delete — ${count} business(es) are currently on the "${name}" plan.`, 400);
+    }
+    const [result] = await pool.query('DELETE FROM package_plans WHERE name = ?', [name]);
+    if (result.affectedRows === 0) return fail(res, 'Plan not found.', 404);
+    await audit(req.user.id, `DELETED package plan: ${name}`, null);
+    return send(res, null, `Package plan "${name}" deleted.`);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // ─── GET /api/super-admin/credit-transactions ─────────────────────────────────
 
 async function getCreditTransactions(req, res, next) {
@@ -464,9 +569,19 @@ async function getCreditTransactions(req, res, next) {
     const page   = Math.max(1, parseInt(req.query.page)    || 1);
     const limit  = Math.min(100, parseInt(req.query.limit) || 20);
     const offset = (page - 1) * limit;
+    const type   = req.query.type || '';
+
+    const conditions = [];
+    const countParams = [];
+    if (type && ['topup', 'approve_grant'].includes(type)) {
+      conditions.push('ct.type = ?');
+      countParams.push(type);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [[{ total }]] = await pool.query(
-      'SELECT COUNT(*) AS total FROM credit_transactions'
+      `SELECT COUNT(*) AS total FROM credit_transactions ct ${where}`,
+      countParams
     );
 
     const [rows] = await pool.query(
@@ -476,9 +591,10 @@ async function getCreditTransactions(req, res, next) {
        FROM   credit_transactions ct
        LEFT JOIN businesses b ON b.id = ct.business_id
        LEFT JOIN users      u ON u.id = ct.admin_id
+       ${where}
        ORDER  BY ct.created_at DESC
        LIMIT  ? OFFSET ?`,
-      [limit, offset]
+      [...countParams, limit, offset]
     );
 
     return send(res, {
@@ -502,9 +618,20 @@ async function getAuditLogs(req, res, next) {
     const page   = Math.max(1, parseInt(req.query.page)    || 1);
     const limit  = Math.min(100, parseInt(req.query.limit) || 20);
     const offset = (page - 1) * limit;
+    const search = (req.query.search || '').trim();
+    const from   = req.query.from || '';
+    const to     = req.query.to   || '';
+
+    const conditions = [];
+    const params     = [];
+    if (search) { conditions.push('sal.action LIKE ?'); params.push(`%${search}%`); }
+    if (from)   { conditions.push('sal.created_at >= ?'); params.push(from); }
+    if (to)     { conditions.push('sal.created_at <= ?'); params.push(to + ' 23:59:59'); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [[{ total }]] = await pool.query(
-      'SELECT COUNT(*) AS total FROM super_admin_logs'
+      `SELECT COUNT(*) AS total FROM super_admin_logs sal ${where}`,
+      params
     );
 
     const [rows] = await pool.query(
@@ -514,9 +641,10 @@ async function getAuditLogs(req, res, next) {
        FROM   super_admin_logs sal
        LEFT JOIN users      u ON u.id  = sal.admin_id
        LEFT JOIN businesses b ON b.id  = sal.target_business_id
+       ${where}
        ORDER  BY sal.created_at DESC
        LIMIT  ? OFFSET ?`,
-      [limit, offset]
+      [...params, limit, offset]
     );
 
     return send(res, {
@@ -533,16 +661,114 @@ async function getAuditLogs(req, res, next) {
   }
 }
 
+// ─── GET /api/super-admin/announcements ───────────────────────────────────────
+
+async function getAnnouncements(req, res, next) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.id, a.title, a.body, a.type, a.created_at,
+              u.email AS created_by_email
+       FROM   announcements a
+       LEFT JOIN users u ON u.id = a.created_by
+       ORDER  BY a.created_at DESC`
+    );
+    return send(res, { announcements: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/super-admin/announcements ──────────────────────────────────────
+
+async function createAnnouncement(req, res, next) {
+  try {
+    const { title, body, type } = req.body;
+    if (!title || !title.trim()) return fail(res, 'Title is required.', 400);
+    if (!body  || !body.trim())  return fail(res, 'Body is required.', 400);
+    const validTypes = ['info', 'warning', 'success'];
+    const annType = validTypes.includes(type) ? type : 'info';
+
+    const [result] = await pool.query(
+      'INSERT INTO announcements (title, body, type, created_by) VALUES (?, ?, ?, ?)',
+      [title.trim(), body.trim(), annType, req.user.id]
+    );
+    const [[created]] = await pool.query(
+      `SELECT a.id, a.title, a.body, a.type, a.created_at, u.email AS created_by_email
+       FROM announcements a LEFT JOIN users u ON u.id = a.created_by
+       WHERE a.id = ? LIMIT 1`,
+      [result.insertId]
+    );
+    await audit(req.user.id, `ANNOUNCEMENT_CREATED: "${title.trim()}"`, null);
+    return send(res, { announcement: created }, 'Announcement created.');
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── DELETE /api/super-admin/announcements/:id ────────────────────────────────
+
+async function deleteAnnouncement(req, res, next) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const [[ann]] = await pool.query('SELECT id, title FROM announcements WHERE id = ? LIMIT 1', [id]);
+    if (!ann) return fail(res, 'Announcement not found.', 404);
+    await pool.query('DELETE FROM announcements WHERE id = ?', [id]);
+    await audit(req.user.id, `ANNOUNCEMENT_DELETED: "${ann.title}"`, null);
+    return send(res, null, 'Announcement deleted.');
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── GET /api/super-admin/analytics ───────────────────────────────────────────
+
+async function getPlatformAnalytics(req, res, next) {
+  try {
+    const [pkgBreakdown]    = await pool.query(
+      'SELECT package, COUNT(*) AS count FROM businesses GROUP BY package ORDER BY count DESC'
+    );
+    const [statusBreakdown] = await pool.query(
+      'SELECT status, COUNT(*) AS count FROM businesses GROUP BY status ORDER BY count DESC'
+    );
+    const [creditsByMonth]  = await pool.query(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, SUM(amount) AS total
+       FROM   credit_transactions
+       WHERE  created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
+       GROUP  BY month ORDER BY month`
+    );
+    const [newBizByMonth]   = await pool.query(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*) AS count
+       FROM   businesses
+       WHERE  created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
+       GROUP  BY month ORDER BY month`
+    );
+    const [topCredits]      = await pool.query(
+      `SELECT name AS business_name, credits_used
+       FROM   businesses ORDER BY credits_used DESC LIMIT 5`
+    );
+    return send(res, { pkgBreakdown, statusBreakdown, creditsByMonth, newBizByMonth, topCredits });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getPlatformStats,
   listBusinesses,
+  createBusiness,
   approveBusiness,
   updateBusiness,
   getPlatformSupport,
   getThreadMessages,
   replyToSupport,
   getPackagePlans,
+  createPackagePlan,
   updatePackagePlan,
+  deletePackagePlan,
   getCreditTransactions,
   getAuditLogs,
+  getAnnouncements,
+  createAnnouncement,
+  deleteAnnouncement,
+  getPlatformAnalytics,
 };

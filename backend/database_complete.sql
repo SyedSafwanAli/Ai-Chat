@@ -19,6 +19,7 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS announcements;
 DROP TABLE IF EXISTS credit_transactions;
 DROP TABLE IF EXISTS package_plans;
 DROP TABLE IF EXISTS super_admin_logs;
@@ -168,7 +169,7 @@ CREATE TABLE super_admin_logs (
 
 CREATE TABLE package_plans (
   id            INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  name          ENUM('basic','pro','trial') NOT NULL UNIQUE,
+  name          VARCHAR(50)  NOT NULL UNIQUE,
   monthly_price DECIMAL(10,2) DEFAULT 0.00,
   credit_limit  INT          DEFAULT 0,
   description   TEXT,
@@ -187,6 +188,17 @@ CREATE TABLE credit_transactions (
   FOREIGN KEY (admin_id)    REFERENCES users(id)      ON DELETE CASCADE,
   INDEX idx_ct_business (business_id),
   INDEX idx_ct_created  (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE announcements (
+  id         INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  title      VARCHAR(255) NOT NULL,
+  body       TEXT         NOT NULL,
+  type       ENUM('info','warning','success') DEFAULT 'info',
+  created_by INT          NOT NULL,
+  created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_ann_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Package Plans seed

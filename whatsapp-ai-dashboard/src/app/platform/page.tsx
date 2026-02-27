@@ -1,15 +1,7 @@
 'use client';
 
-/**
- * Super Admin Platform Dashboard — /platform
- *
- * Privacy rules enforced client-side:
- *  - No customer conversations or messages are shown
- *  - Only aggregate AI credit stats per business
- *  - Support panel shows admin ↔ business-owner messages only
- */
-
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { MainLayout } from '@/components/layout/main-layout';
 import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -20,24 +12,16 @@ import {
   Clock,
   Ban,
   Coins,
-  Calendar,
-  Search,
-  ChevronLeft,
-  ChevronRight,
-  Send,
-  MessageSquare,
-  RefreshCw,
-  X,
-  ShieldCheck,
   Package,
   CreditCard,
   ScrollText,
-  Pencil,
-  Save,
+  LifeBuoy,
+  Megaphone,
+  BarChart3,
+  ArrowRight,
+  ShieldCheck,
+  RefreshCw,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface PlatformStats {
   totalBusinesses: number;
@@ -48,56 +32,7 @@ interface PlatformStats {
   totalCreditsRemaining: number;
 }
 
-interface BusinessRow {
-  id: number;
-  business_name: string;
-  package: 'none' | 'basic' | 'pro' | 'trial';
-  package_expiry: string | null;
-  total_credits_used: number;
-  credits_remaining: number;
-  created_at: string;
-  user_id: number | null;
-  owner_email: string | null;
-  status: 'pending' | 'active' | 'suspended' | null;
-  user_status?: string;
-}
-
-interface Pagination {
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
-}
-
-interface SupportThread {
-  user_id: number;
-  email: string;
-  business_name: string;
-  last_message: string;
-  last_sender: 'user' | 'admin';
-  last_message_at: string;
-  unread_count: number;
-}
-
-interface PackagePlan {
-  id: number;
-  name: 'basic' | 'pro' | 'trial';
-  monthly_price: number;
-  credit_limit: number;
-  description: string;
-}
-
-interface CreditTx {
-  id: number;
-  business_name: string;
-  admin_email: string;
-  type: 'topup' | 'approve_grant';
-  amount: number;
-  notes: string;
-  created_at: string;
-}
-
-interface AuditLog {
+interface RecentLog {
   id: number;
   action: string;
   admin_email: string;
@@ -105,1446 +40,214 @@ interface AuditLog {
   created_at: string;
 }
 
-interface SupportMessage {
-  id: number;
-  user_id: number;
-  message: string;
-  sender: 'user' | 'admin';
-  created_at: string;
-}
+const quickNav = [
+  {
+    href: '/platform/businesses',
+    icon: Building2,
+    label: 'Businesses',
+    desc: 'Manage all registered businesses',
+    iconColor: 'text-blue-600',
+    iconBg: 'bg-blue-50',
+    border: 'hover:border-blue-200',
+  },
+  {
+    href: '/platform/packages',
+    icon: Package,
+    label: 'Package Plans',
+    desc: 'Manage pricing tiers & credit limits',
+    iconColor: 'text-violet-600',
+    iconBg: 'bg-violet-50',
+    border: 'hover:border-violet-200',
+  },
+  {
+    href: '/platform/credits',
+    icon: CreditCard,
+    label: 'Credits',
+    desc: 'View all credit transactions',
+    iconColor: 'text-green-600',
+    iconBg: 'bg-green-50',
+    border: 'hover:border-green-200',
+  },
+  {
+    href: '/platform/audit',
+    icon: ScrollText,
+    label: 'Audit Logs',
+    desc: 'Track all platform actions',
+    iconColor: 'text-amber-600',
+    iconBg: 'bg-amber-50',
+    border: 'hover:border-amber-200',
+  },
+  {
+    href: '/platform/support',
+    icon: LifeBuoy,
+    label: 'Support Center',
+    desc: 'Business support threads',
+    iconColor: 'text-sky-600',
+    iconBg: 'bg-sky-50',
+    border: 'hover:border-sky-200',
+  },
+  {
+    href: '/platform/announcements',
+    icon: Megaphone,
+    label: 'Announcements',
+    desc: 'Post notices to all businesses',
+    iconColor: 'text-orange-600',
+    iconBg: 'bg-orange-50',
+    border: 'hover:border-orange-200',
+  },
+  {
+    href: '/platform/analytics',
+    icon: BarChart3,
+    label: 'Analytics',
+    desc: 'Platform-wide charts & insights',
+    iconColor: 'text-teal-600',
+    iconBg: 'bg-teal-50',
+    border: 'hover:border-teal-200',
+  },
+];
 
-// ─── Formatters ───────────────────────────────────────────────────────────────
+export default function PlatformOverviewPage() {
+  const { user }  = useAuth();
+  const router    = useRouter();
+  const [stats, setStats]     = useState<PlatformStats | null>(null);
+  const [logs,  setLogs]      = useState<RecentLog[]>([]);
+  const [loading, setLoading] = useState(true);
 
-function fmtDate(iso: string | null) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric',
-  });
-}
+  const load = () => {
+    setLoading(true);
+    Promise.allSettled([
+      api.get<PlatformStats>('/super-admin/stats'),
+      api.get<{ logs: RecentLog[] }>('/super-admin/audit-logs?page=1&limit=5'),
+    ]).then(([statsRes, logsRes]) => {
+      if (statsRes.status === 'fulfilled') setStats(statsRes.value as PlatformStats);
+      if (logsRes.status === 'fulfilled')  setLogs((logsRes.value as { logs: RecentLog[] }).logs);
+    }).finally(() => setLoading(false));
+  };
 
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
+  useEffect(() => {
+    if (!user) return;
+    if (user.role !== 'super_admin') { router.replace('/'); return; }
+    load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
-function fmtCredits(val: number | string) {
-  return Number(val).toFixed(2);
-}
+  const kpiCards = [
+    { label: 'Total Businesses',   value: stats?.totalBusinesses,      icon: Building2,    iconColor: 'text-blue-600',   iconBg: 'bg-blue-50'   },
+    { label: 'Active',             value: stats?.activeBusinesses,      icon: CheckCircle2, iconColor: 'text-green-600',  iconBg: 'bg-green-50'  },
+    { label: 'Pending Approval',   value: stats?.pendingBusinesses,     icon: Clock,        iconColor: 'text-amber-600',  iconBg: 'bg-amber-50'  },
+    { label: 'Suspended',          value: stats?.suspendedBusinesses,   icon: Ban,          iconColor: 'text-red-600',    iconBg: 'bg-red-50'    },
+    { label: 'Total Credits Used', value: stats?.totalCreditsUsed,      icon: Coins,        iconColor: 'text-violet-600', iconBg: 'bg-violet-50' },
+    { label: 'Credits Remaining',  value: stats?.totalCreditsRemaining, icon: ShieldCheck,  iconColor: 'text-teal-600',   iconBg: 'bg-teal-50'   },
+  ];
 
-function truncate(str: string, n = 58) {
-  if (!str) return '';
-  return str.length > n ? str.slice(0, n) + '…' : str;
-}
-
-// ─── Stat Card ────────────────────────────────────────────────────────────────
-
-function StatCard({
-  label, value, icon: Icon, color, sub,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ElementType;
-  color: string;
-  sub?: string;
-}) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-card">
-      <div className="flex items-start justify-between">
+    <MainLayout pageTitle="Platform Admin" pageDescription="Global overview & quick access">
+
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">{value}</p>
-          {sub && <p className="mt-0.5 text-xs text-gray-400">{sub}</p>}
+          <h2 className="text-xl font-bold text-gray-900">Platform Overview</h2>
+          <p className="text-sm text-gray-500 mt-0.5">Real-time stats across all businesses</p>
         </div>
-        <div className={cn('rounded-xl p-3', color)}>
-          <Icon className="h-5 w-5" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Badges ───────────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="text-xs text-gray-400">—</span>;
-  const map: Record<string, string> = {
-    active:    'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    pending:   'bg-amber-50   text-amber-700   ring-amber-200',
-    suspended: 'bg-rose-50    text-rose-700    ring-rose-200',
-  };
-  const label = status;
-  return (
-    <span className={cn(
-      'inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 capitalize',
-      map[status] ?? 'bg-gray-100 text-gray-600 ring-gray-200'
-    )}>
-      {label}
-    </span>
-  );
-}
-
-function PackageBadge({ pkg }: { pkg: string }) {
-  const map: Record<string, string> = {
-    none:  'bg-gray-100  text-gray-500',
-    basic: 'bg-blue-50   text-blue-700',
-    pro:   'bg-violet-50 text-violet-700',
-    trial: 'bg-amber-50  text-amber-700',
-  };
-  return (
-    <span className={cn(
-      'inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize',
-      map[pkg] ?? 'bg-gray-100 text-gray-500'
-    )}>
-      {pkg}
-    </span>
-  );
-}
-
-// ─── Top-up Credits Modal ─────────────────────────────────────────────────────
-
-function TopUpModal({
-  biz, onClose, onSave,
-}: {
-  biz: BusinessRow;
-  onClose: () => void;
-  onSave: (id: number, amount: number) => Promise<void>;
-}) {
-  const [amount, setAmount] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-
-  const parsed     = parseFloat(amount);
-  const isValid    = !isNaN(parsed) && parsed > 0;
-  const current    = Number(biz.credits_remaining);
-  const afterTopUp = isValid ? current + parsed : current;
-
-  async function handleSave() {
-    if (!isValid) { setError('Enter a valid positive amount.'); return; }
-    setSaving(true);
-    try {
-      await onSave(biz.id, parsed);
-    } catch {
-      setError('Top-up failed. Please try again.');
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-        {/* Header */}
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="rounded-lg bg-violet-100 p-2">
-              <Coins className="h-4 w-4 text-violet-700" />
-            </div>
-            <h3 className="text-base font-semibold text-gray-900">Top-up Credits</h3>
-          </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-gray-100">
-            <X className="h-4 w-4 text-gray-400" />
-          </button>
-        </div>
-
-        {/* Business name */}
-        <p className="mb-3 text-sm font-medium text-gray-700">{biz.business_name}</p>
-
-        {/* Balance preview */}
-        <div className="mb-4 rounded-xl bg-gray-50 px-4 py-3 space-y-1">
-          <div className="flex justify-between text-xs">
-            <span className="text-gray-500">Current balance</span>
-            <span className="font-semibold text-gray-700">{fmtCredits(current)} credits</span>
-          </div>
-          {isValid && (
-            <div className="flex justify-between text-xs">
-              <span className="text-emerald-600">After top-up</span>
-              <span className="font-bold text-emerald-700">{fmtCredits(afterTopUp)} credits</span>
-            </div>
-          )}
-        </div>
-
-        {/* Amount input */}
-        <label className="mb-1 block text-xs font-medium text-gray-700">
-          Amount to add (credits)
-        </label>
-        <input
-          type="number"
-          min="0.01"
-          step="0.01"
-          placeholder="e.g. 500"
-          value={amount}
-          onChange={(e) => { setAmount(e.target.value); setError(''); }}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-          autoFocus
-        />
-        {error && <p className="mt-1 text-xs text-rose-500">{error}</p>}
-
-        {/* Actions */}
-        <div className="mt-4 flex gap-2">
-          <button
-            onClick={onClose}
-            className="flex-1 rounded-lg border border-gray-200 py-2 text-sm text-gray-600 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !isValid}
-            className="flex-1 rounded-lg bg-violet-600 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Processing…' : `Add ${isValid ? fmtCredits(parsed) : '0'} Credits`}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Extend Package Modal ─────────────────────────────────────────────────────
-
-function ExtendModal({
-  biz, onClose, onSave,
-}: {
-  biz: BusinessRow;
-  onClose: () => void;
-  onSave: (id: number, pkg: string, expiry: string) => Promise<void>;
-}) {
-  const [pkg,    setPkg]    = useState<string>(biz.package);
-  const [expiry, setExpiry] = useState(
-    biz.package_expiry ? biz.package_expiry.slice(0, 10) : ''
-  );
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-
-  // Quick preset: add N days from today
-  function addDays(n: number) {
-    const d = new Date();
-    d.setDate(d.getDate() + n);
-    setExpiry(d.toISOString().slice(0, 10));
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      await onSave(biz.id, pkg, expiry);
-    } catch {
-      setError('Update failed. Please try again.');
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-        {/* Header */}
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="rounded-lg bg-blue-100 p-2">
-              <Calendar className="h-4 w-4 text-blue-700" />
-            </div>
-            <h3 className="text-base font-semibold text-gray-900">Extend Package</h3>
-          </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-gray-100">
-            <X className="h-4 w-4 text-gray-400" />
-          </button>
-        </div>
-
-        <p className="mb-4 text-sm font-medium text-gray-700">{biz.business_name}</p>
-
-        {/* Package select */}
-        <label className="mb-1 block text-xs font-medium text-gray-700">Package tier</label>
-        <select
-          value={pkg}
-          onChange={(e) => setPkg(e.target.value)}
-          className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <button
+          onClick={load}
+          disabled={loading}
+          className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
-          <option value="none">None</option>
-          <option value="trial">Trial</option>
-          <option value="basic">Basic</option>
-          <option value="pro">Pro</option>
-        </select>
-
-        {/* Expiry date */}
-        <label className="mb-1 block text-xs font-medium text-gray-700">Expiry date</label>
-        <input
-          type="date"
-          value={expiry}
-          onChange={(e) => setExpiry(e.target.value)}
-          className="mb-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-
-        {/* Quick presets */}
-        <div className="mb-3 flex gap-1.5">
-          {[30, 90, 180, 365].map((d) => (
-            <button
-              key={d}
-              onClick={() => addDays(d)}
-              className="flex-1 rounded-lg border border-gray-200 py-1 text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors"
-            >
-              +{d}d
-            </button>
-          ))}
-        </div>
-
-        {error && <p className="mb-2 text-xs text-rose-500">{error}</p>}
-
-        {/* Actions */}
-        <div className="flex gap-2">
-          <button
-            onClick={onClose}
-            className="flex-1 rounded-lg border border-gray-200 py-2 text-sm text-gray-600 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Saving…' : 'Update Package'}
-          </button>
-        </div>
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
-    </div>
-  );
-}
 
-// ─── Approve Business Modal ───────────────────────────────────────────────────
-
-function ApproveModal({
-  biz, onClose, onSave,
-}: {
-  biz: BusinessRow;
-  onClose: () => void;
-  onSave: (id: number, pkg: string, expiry: string, credits: number) => Promise<void>;
-}) {
-  const [pkg,     setPkg]     = useState('trial');
-  const [expiry,  setExpiry]  = useState('');
-  const [credits, setCredits] = useState('100');
-  const [saving,  setSaving]  = useState(false);
-  const [error,   setError]   = useState('');
-
-  function addDays(n: number) {
-    const d = new Date();
-    d.setDate(d.getDate() + n);
-    setExpiry(d.toISOString().slice(0, 10));
-  }
-
-  async function handleSave() {
-    if (!expiry) { setError('Please select an expiry date.'); return; }
-    setSaving(true);
-    try {
-      await onSave(biz.id, pkg, expiry, parseFloat(credits) || 0);
-    } catch {
-      setError('Approval failed. Please try again.');
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="rounded-lg bg-emerald-100 p-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+        {kpiCards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <div key={card.label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider leading-tight">{card.label}</p>
+                <div className={`rounded-lg p-2 ${card.iconBg}`}>
+                  <Icon className={`h-4 w-4 ${card.iconColor}`} />
+                </div>
+              </div>
+              {loading ? (
+                <div className="h-8 w-20 animate-pulse rounded-lg bg-gray-100" />
+              ) : (
+                <p className="text-2xl font-bold text-gray-900">
+                  {Number(card.value ?? 0).toLocaleString()}
+                </p>
+              )}
             </div>
-            <h3 className="text-base font-semibold text-gray-900">Approve & Assign Plan</h3>
+          );
+        })}
+      </div>
+
+      {/* Quick Navigation */}
+      <div className="mb-8">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Quick Access</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+          {quickNav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`group rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md transition-all duration-200 hover:-translate-y-0.5 ${item.border}`}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className={`rounded-lg p-2.5 ${item.iconBg}`}>
+                    <Icon className={`h-5 w-5 ${item.iconColor}`} />
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-gray-300 group-hover:text-gray-500 transition-colors mt-1" />
+                </div>
+                <p className="text-sm font-semibold text-gray-900">{item.label}</p>
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed">{item.desc}</p>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Recent Activity */}
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-900">Recent Activity</h3>
+          <Link href="/platform/audit" className="text-xs text-violet-600 hover:text-violet-700 font-medium">
+            View all logs →
+          </Link>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-gray-100">
-            <X className="h-4 w-4 text-gray-400" />
-          </button>
-        </div>
-
-        <p className="mb-4 text-sm font-medium text-gray-700">{biz.business_name}</p>
-        <p className="mb-4 text-xs text-gray-400">{biz.owner_email}</p>
-
-        {/* Package */}
-        <label className="mb-1 block text-xs font-medium text-gray-700">Package</label>
-        <select
-          value={pkg}
-          onChange={(e) => setPkg(e.target.value)}
-          className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        >
-          <option value="trial">Trial</option>
-          <option value="basic">Basic</option>
-          <option value="pro">Pro</option>
-        </select>
-
-        {/* Expiry */}
-        <label className="mb-1 block text-xs font-medium text-gray-700">Expiry date</label>
-        <input
-          type="date"
-          value={expiry}
-          onChange={(e) => setExpiry(e.target.value)}
-          className="mb-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        />
-        <div className="mb-3 flex gap-1.5">
-          {[30, 90, 180, 365].map((d) => (
-            <button
-              key={d}
-              onClick={() => addDays(d)}
-              className="flex-1 rounded-lg border border-gray-200 py-1 text-xs text-gray-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition-colors"
-            >
-              +{d}d
-            </button>
-          ))}
-        </div>
-
-        {/* Initial credits */}
-        <label className="mb-1 block text-xs font-medium text-gray-700">Initial credits</label>
-        <input
-          type="number"
-          min="0"
-          step="1"
-          value={credits}
-          onChange={(e) => setCredits(e.target.value)}
-          className="mb-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        />
-
-        {error && <p className="mb-2 text-xs text-rose-500">{error}</p>}
-
-        <div className="flex gap-2">
-          <button
-            onClick={onClose}
-            className="flex-1 rounded-lg border border-gray-200 py-2 text-sm text-gray-600 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Approving…' : 'Approve & Activate'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
-export default function PlatformPage() {
-  const { user } = useAuth();
-  const router   = useRouter();
-
-  // Redirect non-super-admins immediately
-  useEffect(() => {
-    if (user && user.role !== 'super_admin') router.replace('/');
-  }, [user, router]);
-
-  // ── UI tab ────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState<'businesses' | 'packages' | 'credits' | 'audit' | 'support'>('businesses');
-
-  // ── Stats ─────────────────────────────────────────────────────────────────
-  const [stats, setStats] = useState<PlatformStats | null>(null);
-
-  // ── Businesses ────────────────────────────────────────────────────────────
-  const [businesses,   setBusinesses]   = useState<BusinessRow[]>([]);
-  const [pagination,   setPagination]   = useState<Pagination>({ total: 0, page: 1, limit: 15, totalPages: 1 });
-  const [bizLoading,   setBizLoading]   = useState(true);
-  const [search,       setSearch]       = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [pkgFilter,    setPkgFilter]    = useState('');
-
-  // ── Modals ────────────────────────────────────────────────────────────────
-  const [topUpBiz,   setTopUpBiz]   = useState<BusinessRow | null>(null);
-  const [extendBiz,  setExtendBiz]  = useState<BusinessRow | null>(null);
-  const [approveBiz, setApproveBiz] = useState<BusinessRow | null>(null);
-
-  // ── Support ───────────────────────────────────────────────────────────────
-  const [threads,         setThreads]         = useState<SupportThread[]>([]);
-  const [threadsLoading,  setThreadsLoading]  = useState(false);
-  const [activeUserId,    setActiveUserId]    = useState<number | null>(null);
-  const [messages,        setMessages]        = useState<SupportMessage[]>([]);
-  const [msgsLoading,     setMsgsLoading]     = useState(false);
-  const [replyText,       setReplyText]       = useState('');
-  const [replySending,    setReplySending]    = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  // ── Packages ──────────────────────────────────────────────────────────────
-  const [packages,    setPackages]    = useState<PackagePlan[]>([]);
-  const [editPkg,     setEditPkg]     = useState<PackagePlan | null>(null);
-  const [pkgSaving,   setPkgSaving]   = useState(false);
-  const [editPrice,   setEditPrice]   = useState('');
-  const [editCredits, setEditCredits] = useState('');
-  const [editDesc,    setEditDesc]    = useState('');
-
-  // ── Credits Transactions ──────────────────────────────────────────────────
-  const [creditTxs,    setCreditTxs]    = useState<CreditTx[]>([]);
-  const [creditsPage,  setCreditsPage]  = useState(1);
-  const [creditsTotal, setCreditsTotal] = useState(0);
-  const [creditsTotalPages, setCreditsTotalPages] = useState(1);
-  const [creditsLoading, setCreditsLoading] = useState(false);
-
-  // ── Audit Logs ────────────────────────────────────────────────────────────
-  const [auditLogs,   setAuditLogs]   = useState<AuditLog[]>([]);
-  const [auditPage,   setAuditPage]   = useState(1);
-  const [auditTotal,  setAuditTotal]  = useState(0);
-  const [auditTotalPages, setAuditTotalPages] = useState(1);
-  const [auditLoading, setAuditLoading] = useState(false);
-
-  // ── Fetch helpers ─────────────────────────────────────────────────────────
-
-  const fetchStats = useCallback(() => {
-    api.get<PlatformStats>('/super-admin/stats')
-      .then(setStats)
-      .catch(() => {});
-  }, []);
-
-  const fetchBusinesses = useCallback((page = 1) => {
-    setBizLoading(true);
-    const qs = new URLSearchParams({
-      page: String(page), limit: '15',
-      ...(search       ? { search }              : {}),
-      ...(statusFilter ? { status: statusFilter } : {}),
-      ...(pkgFilter    ? { package: pkgFilter }   : {}),
-    });
-    api.get<{ businesses: BusinessRow[]; pagination: Pagination }>(
-      `/super-admin/businesses?${qs}`
-    )
-      .then(({ businesses: rows, pagination: pg }) => {
-        setBusinesses(rows);
-        setPagination(pg);
-      })
-      .catch(() => {})
-      .finally(() => setBizLoading(false));
-  }, [search, statusFilter, pkgFilter]);
-
-  const fetchThreads = useCallback(() => {
-    setThreadsLoading(true);
-    api.get<{ threads: SupportThread[] }>('/super-admin/support')
-      .then(({ threads: t }) => setThreads(t))
-      .catch(() => {})
-      .finally(() => setThreadsLoading(false));
-  }, []);
-
-  const loadMessages = useCallback((userId: number) => {
-    setActiveUserId(userId);
-    setMsgsLoading(true);
-    setMessages([]);
-    api.get<{ messages: SupportMessage[] }>(`/super-admin/support/${userId}`)
-      .then(({ messages: msgs }) => setMessages(msgs))
-      .catch(() => {})
-      .finally(() => setMsgsLoading(false));
-  }, []);
-
-  const fetchPackages = useCallback(() => {
-    api.get<{ packages: PackagePlan[] }>('/super-admin/packages')
-      .then(({ packages: pkgs }) => setPackages(pkgs))
-      .catch(() => {});
-  }, []);
-
-  const fetchCreditTxs = useCallback((page = 1) => {
-    setCreditsLoading(true);
-    api.get<{ transactions: CreditTx[]; pagination: { total: number; totalPages: number } }>(
-      `/super-admin/credit-transactions?page=${page}&limit=15`
-    )
-      .then(({ transactions, pagination: pg }) => {
-        setCreditTxs(transactions);
-        setCreditsTotal(pg.total);
-        setCreditsTotalPages(pg.totalPages);
-        setCreditsPage(page);
-      })
-      .catch(() => {})
-      .finally(() => setCreditsLoading(false));
-  }, []);
-
-  const fetchAuditLogs = useCallback((page = 1) => {
-    setAuditLoading(true);
-    api.get<{ logs: AuditLog[]; pagination: { total: number; totalPages: number } }>(
-      `/super-admin/audit-logs?page=${page}&limit=20`
-    )
-      .then(({ logs, pagination: pg }) => {
-        setAuditLogs(logs);
-        setAuditTotal(pg.total);
-        setAuditTotalPages(pg.totalPages);
-        setAuditPage(page);
-      })
-      .catch(() => {})
-      .finally(() => setAuditLoading(false));
-  }, []);
-
-  // ── Effects ───────────────────────────────────────────────────────────────
-
-  useEffect(() => { fetchStats(); }, [fetchStats]);
-  useEffect(() => { fetchBusinesses(1); }, [fetchBusinesses]);
-  useEffect(() => {
-    if (tab === 'support')  fetchThreads();
-    if (tab === 'packages') fetchPackages();
-    if (tab === 'credits')  fetchCreditTxs(1);
-    if (tab === 'audit')    fetchAuditLogs(1);
-  }, [tab, fetchThreads, fetchPackages, fetchCreditTxs, fetchAuditLogs]);
-
-  // Auto-scroll to latest message
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // ── Business actions ──────────────────────────────────────────────────────
-
-  async function handleToggleStatus(biz: BusinessRow) {
-    const newStatus = biz.status === 'suspended' ? 'active' : 'suspended';
-    await api.patch(`/super-admin/businesses/${biz.id}`, { status: newStatus });
-    fetchBusinesses(pagination.page);
-    fetchStats();
-  }
-
-  async function handleApprove(id: number, pkg: string, expiry: string, credits: number) {
-    await api.patch(`/super-admin/businesses/${id}/approve`, {
-      package: pkg,
-      package_expiry: expiry,
-      top_up_credits: credits,
-    });
-    setApproveBiz(null);
-    fetchBusinesses(pagination.page);
-    fetchStats();
-  }
-
-  async function handleTopUp(id: number, amount: number) {
-    await api.patch(`/super-admin/businesses/${id}`, { top_up: amount });
-    setTopUpBiz(null);
-    fetchBusinesses(pagination.page);
-    fetchStats();
-  }
-
-  async function handleExtend(id: number, pkg: string, expiry: string) {
-    await api.patch(`/super-admin/businesses/${id}`, {
-      package: pkg,
-      ...(expiry ? { package_expiry: expiry } : {}),
-    });
-    setExtendBiz(null);
-    fetchBusinesses(pagination.page);
-  }
-
-  // ── Support reply ─────────────────────────────────────────────────────────
-
-  async function handleReply() {
-    if (!replyText.trim() || activeUserId === null) return;
-    setReplySending(true);
-    try {
-      await api.post(`/super-admin/support/${activeUserId}`, { message: replyText.trim() });
-      setReplyText('');
-      loadMessages(activeUserId);
-      fetchThreads(); // refresh unread counts
-    } finally {
-      setReplySending(false);
-    }
-  }
-
-  // ── Package edit helpers ──────────────────────────────────────────────────
-
-  function openEditPkg(plan: PackagePlan) {
-    setEditPkg(plan);
-    setEditPrice(String(plan.monthly_price));
-    setEditCredits(String(plan.credit_limit));
-    setEditDesc(plan.description || '');
-  }
-
-  async function savePkgPlan() {
-    if (!editPkg) return;
-    setPkgSaving(true);
-    try {
-      await api.put(`/super-admin/packages/${editPkg.name}`, {
-        monthly_price: parseFloat(editPrice) || 0,
-        credit_limit:  parseInt(editCredits)  || 0,
-        description:   editDesc,
-      });
-      setEditPkg(null);
-      fetchPackages();
-    } finally {
-      setPkgSaving(false);
-    }
-  }
-
-  // ── Derived ───────────────────────────────────────────────────────────────
-
-  const activeThread   = threads.find((t) => t.user_id === activeUserId);
-  const totalUnread    = threads.reduce((s, t) => s + Number(t.unread_count), 0);
-
-  if (user?.role !== 'super_admin') return null;
-
-  // ─────────────────────────────────────────────────────────────────────────
-  return (
-    <MainLayout pageTitle="Platform Admin" pageDescription="Global tenant management · billing · support">
-
-      {/* ── KPI Stats ──────────────────────────────────────────────────────── */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 mb-6">
-        <StatCard
-          label="Total Businesses"
-          value={stats?.totalBusinesses ?? '—'}
-          icon={Building2}
-          color="bg-blue-50 text-blue-600"
-        />
-        <StatCard
-          label="Active"
-          value={stats?.activeBusinesses ?? '—'}
-          icon={CheckCircle2}
-          color="bg-emerald-50 text-emerald-600"
-          sub="valid package"
-        />
-        <StatCard
-          label="Pending Approval"
-          value={stats?.pendingBusinesses ?? '—'}
-          icon={Clock}
-          color="bg-amber-50 text-amber-600"
-          sub="awaiting activation"
-        />
-        <StatCard
-          label="Suspended"
-          value={stats?.suspendedBusinesses ?? '—'}
-          icon={Ban}
-          color="bg-rose-50 text-rose-600"
-        />
-        <StatCard
-          label="Total Credits Used"
-          value={stats ? fmtCredits(stats.totalCreditsUsed) : '—'}
-          icon={Coins}
-          color="bg-violet-50 text-violet-600"
-          sub="all businesses"
-        />
-        <StatCard
-          label="Credits Remaining"
-          value={stats ? fmtCredits(stats.totalCreditsRemaining) : '—'}
-          icon={ShieldCheck}
-          color="bg-teal-50 text-teal-600"
-          sub="total balance pool"
-        />
-      </div>
-
-      {/* ── Tab bar ────────────────────────────────────────────────────────── */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap gap-1 rounded-xl bg-gray-100 p-1">
-          {([
-            { key: 'businesses', label: 'Businesses' },
-            { key: 'packages',   label: 'Packages'   },
-            { key: 'credits',    label: 'Credits'     },
-            { key: 'audit',      label: 'Audit Logs'  },
-            { key: 'support',    label: 'Support'     },
-          ] as const).map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={cn(
-                'relative rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-                tab === key
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              )}
-            >
-              {label}
-              {key === 'support' && totalUnread > 0 && (
-                <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
-                  {totalUnread > 99 ? '99+' : totalUnread}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Refresh button (businesses tab) */}
-        {tab === 'businesses' && (
-          <button
-            onClick={() => { fetchBusinesses(pagination.page); fetchStats(); }}
-            className="ml-auto rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
+        ) : logs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+            <ScrollText className="h-8 w-8 mb-2" />
+            <p className="text-sm">No recent activity</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {logs.map((log) => (
+              <div key={log.id} className="flex items-start gap-4 px-5 py-3.5 hover:bg-gray-50 transition-colors">
+                <div className="mt-0.5 h-7 w-7 rounded-full bg-violet-100 flex items-center justify-center flex-shrink-0">
+                  <ShieldCheck className="h-3.5 w-3.5 text-violet-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-mono text-gray-700 break-all leading-relaxed">{log.action}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    {log.admin_email}
+                    {log.target_business_name && ` · ${log.target_business_name}`}
+                  </p>
+                </div>
+                <p className="text-[10px] text-gray-400 flex-shrink-0 mt-0.5">
+                  {new Date(log.created_at).toLocaleDateString()}
+                </p>
+              </div>
+            ))}
+          </div>
         )}
       </div>
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          BUSINESSES TAB
-      ══════════════════════════════════════════════════════════════════════ */}
-      {tab === 'businesses' && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-card">
-
-          {/* Filters */}
-          <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 px-5 py-4">
-            {/* Search */}
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search business name or email…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-              />
-            </div>
-
-            {/* Status filter */}
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
-            >
-              <option value="">All Status</option>
-              <option value="active">Active</option>
-              <option value="pending">Pending</option>
-              <option value="suspended">Suspended</option>
-            </select>
-
-            {/* Package filter */}
-            <select
-              value={pkgFilter}
-              onChange={(e) => setPkgFilter(e.target.value)}
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
-            >
-              <option value="">All Packages</option>
-              <option value="none">None</option>
-              <option value="trial">Trial</option>
-              <option value="basic">Basic</option>
-              <option value="pro">Pro</option>
-            </select>
-          </div>
-
-          {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  {[
-                    'Business', 'Package', 'Expiry',
-                    'Credits Used', 'Credits Left', 'Status', 'Actions',
-                  ].map((h) => (
-                    <th
-                      key={h}
-                      className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {bizLoading ? (
-                  <tr>
-                    <td colSpan={7} className="py-16 text-center">
-                      <div className="mx-auto h-6 w-6 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
-                    </td>
-                  </tr>
-                ) : businesses.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-16 text-center text-sm text-gray-400">
-                      No businesses found.
-                    </td>
-                  </tr>
-                ) : businesses.map((biz) => (
-                  <tr key={biz.id} className="transition-colors hover:bg-gray-50/50">
-
-                    {/* Business */}
-                    <td className="px-5 py-3.5">
-                      <p className="font-semibold text-gray-900">{biz.business_name}</p>
-                      <p className="text-[10px] text-gray-400">{biz.owner_email ?? '—'}</p>
-                    </td>
-
-                    {/* Package */}
-                    <td className="px-5 py-3.5">
-                      <PackageBadge pkg={biz.package} />
-                    </td>
-
-                    {/* Expiry */}
-                    <td className="whitespace-nowrap px-5 py-3.5 text-xs text-gray-500">
-                      {fmtDate(biz.package_expiry)}
-                    </td>
-
-                    {/* Credits Used */}
-                    <td className="px-5 py-3.5 font-medium text-gray-700">
-                      {fmtCredits(biz.total_credits_used)}
-                    </td>
-
-                    {/* Credits Remaining */}
-                    <td className="px-5 py-3.5">
-                      <span className={cn(
-                        'font-semibold',
-                        Number(biz.credits_remaining) <= 0
-                          ? 'text-rose-600'
-                          : Number(biz.credits_remaining) < 100
-                            ? 'text-amber-600'
-                            : 'text-emerald-600'
-                      )}>
-                        {fmtCredits(biz.credits_remaining)}
-                      </span>
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-5 py-3.5">
-                      <StatusBadge status={biz.status} />
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-1.5">
-
-                        {/* Approve (pending only) */}
-                        {biz.status === 'pending' && (
-                          <button
-                            onClick={() => setApproveBiz(biz)}
-                            title="Approve & Assign Plan"
-                            className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 hover:bg-emerald-100 transition-colors"
-                          >
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-
-                        {/* Top-up credits */}
-                        <button
-                          onClick={() => setTopUpBiz(biz)}
-                          title="Top-up Credits"
-                          className="rounded-lg bg-violet-50 p-1.5 text-violet-600 hover:bg-violet-100 transition-colors"
-                        >
-                          <Coins className="h-3.5 w-3.5" />
-                        </button>
-
-                        {/* Extend package */}
-                        <button
-                          onClick={() => setExtendBiz(biz)}
-                          title="Extend Package"
-                          className="rounded-lg bg-blue-50 p-1.5 text-blue-600 hover:bg-blue-100 transition-colors"
-                        >
-                          <Calendar className="h-3.5 w-3.5" />
-                        </button>
-
-                        {/* Suspend / Activate (non-pending) */}
-                        {biz.status !== 'pending' && (
-                          <button
-                            onClick={() => handleToggleStatus(biz)}
-                            title={biz.status === 'suspended' ? 'Activate' : 'Suspend'}
-                            className={cn(
-                              'rounded-lg p-1.5 transition-colors',
-                              biz.status === 'suspended'
-                                ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
-                                : 'bg-rose-50 text-rose-600 hover:bg-rose-100'
-                            )}
-                          >
-                            {biz.status === 'suspended'
-                              ? <CheckCircle2 className="h-3.5 w-3.5" />
-                              : <Ban className="h-3.5 w-3.5" />
-                            }
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {pagination.totalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
-              <p className="text-xs text-gray-500">
-                {(pagination.page - 1) * pagination.limit + 1}–
-                {Math.min(pagination.page * pagination.limit, pagination.total)} of{' '}
-                {pagination.total} businesses
-              </p>
-              <div className="flex gap-1">
-                <button
-                  onClick={() => fetchBusinesses(pagination.page - 1)}
-                  disabled={pagination.page === 1}
-                  className="rounded-lg border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => fetchBusinesses(pagination.page + 1)}
-                  disabled={pagination.page === pagination.totalPages}
-                  className="rounded-lg border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          SUPPORT TAB — admin ↔ business-owner only, no customer data
-      ══════════════════════════════════════════════════════════════════════ */}
-      {tab === 'support' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" style={{ height: 580 }}>
-
-          {/* ── Thread list ─────────────────────────────────────────────── */}
-          <div className="flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-card">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-              <h3 className="text-sm font-semibold text-gray-900">Business Threads</h3>
-              <button
-                onClick={fetchThreads}
-                className="rounded p-1 text-gray-400 hover:bg-gray-100"
-                title="Refresh"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto">
-              {threadsLoading ? (
-                <div className="flex justify-center py-12">
-                  <div className="h-5 w-5 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
-                </div>
-              ) : threads.length === 0 ? (
-                <div className="py-12 text-center">
-                  <MessageSquare className="mx-auto mb-2 h-8 w-8 text-gray-200" />
-                  <p className="text-sm text-gray-400">No support threads yet.</p>
-                </div>
-              ) : threads.map((t) => (
-                <button
-                  key={t.user_id}
-                  onClick={() => loadMessages(t.user_id)}
-                  className={cn(
-                    'w-full border-b border-gray-50 px-4 py-3.5 text-left transition-colors',
-                    activeUserId === t.user_id ? 'bg-violet-50' : 'hover:bg-gray-50'
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="truncate text-sm font-semibold text-gray-900">
-                          {t.business_name}
-                        </p>
-                        {Number(t.unread_count) > 0 && (
-                          <span className="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
-                            {t.unread_count}
-                          </span>
-                        )}
-                      </div>
-                      <p className="truncate text-[10px] text-gray-400">{t.email}</p>
-                    </div>
-                    <span className="whitespace-nowrap text-[10px] text-gray-400">
-                      {fmtDate(t.last_message_at)}
-                    </span>
-                  </div>
-                  {/* Last message snippet */}
-                  <p className={cn(
-                    'mt-1 truncate text-xs',
-                    Number(t.unread_count) > 0
-                      ? 'font-medium text-gray-700'
-                      : 'text-gray-400'
-                  )}>
-                    {t.last_sender === 'admin' ? 'You: ' : ''}
-                    {truncate(t.last_message)}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Chat pane ───────────────────────────────────────────────── */}
-          <div className="lg:col-span-2 flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-card">
-            {!activeThread ? (
-              /* Empty state */
-              <div className="flex flex-1 flex-col items-center justify-center gap-3 text-gray-300">
-                <MessageSquare className="h-12 w-12" />
-                <p className="text-sm">Select a business thread to view messages</p>
-              </div>
-            ) : (
-              <>
-                {/* Thread header */}
-                <div className="border-b border-gray-100 px-5 py-3">
-                  <p className="text-sm font-semibold text-gray-900">
-                    {activeThread.business_name}
-                  </p>
-                  <p className="text-xs text-gray-400">{activeThread.email}</p>
-                </div>
-
-                {/* Messages */}
-                <div className="flex-1 space-y-3 overflow-y-auto p-4">
-                  {msgsLoading ? (
-                    <div className="flex justify-center py-8">
-                      <div className="h-5 w-5 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
-                    </div>
-                  ) : messages.length === 0 ? (
-                    <p className="py-8 text-center text-sm text-gray-400">No messages yet.</p>
-                  ) : messages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={cn('flex', msg.sender === 'admin' ? 'justify-end' : 'justify-start')}
-                    >
-                      <div className={cn(
-                        'max-w-[75%] rounded-2xl px-4 py-2.5',
-                        msg.sender === 'admin'
-                          ? 'rounded-br-sm bg-violet-600 text-white'
-                          : 'rounded-bl-sm bg-gray-100 text-gray-900'
-                      )}>
-                        <p className="text-sm leading-relaxed">{msg.message}</p>
-                        <p className={cn(
-                          'mt-1 text-[10px]',
-                          msg.sender === 'admin' ? 'text-violet-200' : 'text-gray-400'
-                        )}>
-                          {fmtTime(msg.created_at)}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={bottomRef} />
-                </div>
-
-                {/* Reply box */}
-                <div className="flex items-end gap-2 border-t border-gray-100 p-3">
-                  <textarea
-                    rows={1}
-                    placeholder="Type a reply… (Enter to send)"
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleReply();
-                      }
-                    }}
-                    className="flex-1 resize-none rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-                  />
-                  <button
-                    onClick={handleReply}
-                    disabled={replySending || !replyText.trim()}
-                    className="rounded-xl bg-violet-600 p-2.5 text-white hover:bg-violet-700 disabled:opacity-50 transition-colors"
-                  >
-                    <Send className="h-4 w-4" />
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          PACKAGES TAB
-      ══════════════════════════════════════════════════════════════════════ */}
-      {tab === 'packages' && (
-        <div>
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-gray-900">Package Plans</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Edit pricing, credit limits, and descriptions for each plan tier.</p>
-            </div>
-          </div>
-
-          <div className="grid gap-5 sm:grid-cols-3">
-            {packages.length === 0 ? (
-              <div className="col-span-3 py-16 text-center text-sm text-gray-400">
-                <Package className="mx-auto mb-3 h-8 w-8 text-gray-300" />
-                No package plans found. Import migrate-v4.sql to seed default plans.
-              </div>
-            ) : packages.map((plan) => {
-              const colors = {
-                trial: { border: 'border-amber-200',  bg: 'bg-amber-50',   badge: 'bg-amber-100 text-amber-700',   icon: 'bg-amber-100 text-amber-600'   },
-                basic:  { border: 'border-blue-200',   bg: 'bg-blue-50',    badge: 'bg-blue-100 text-blue-700',     icon: 'bg-blue-100 text-blue-600'     },
-                pro:    { border: 'border-violet-200', bg: 'bg-violet-50',  badge: 'bg-violet-100 text-violet-700', icon: 'bg-violet-100 text-violet-600' },
-              }[plan.name];
-
-              return (
-                <div key={plan.name} className={cn('rounded-xl border-2 bg-white p-5 shadow-sm', colors.border)}>
-                  <div className="mb-4 flex items-start justify-between">
-                    <div>
-                      <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide', colors.badge)}>
-                        {plan.name}
-                      </span>
-                      <p className="mt-3 text-2xl font-bold text-gray-900">
-                        ${Number(plan.monthly_price).toFixed(2)}
-                        <span className="text-sm font-normal text-gray-400">/mo</span>
-                      </p>
-                    </div>
-                    <div className={cn('rounded-xl p-2.5', colors.icon)}>
-                      <Package className="h-5 w-5" />
-                    </div>
-                  </div>
-
-                  <div className="mb-3 flex items-center gap-2 text-sm text-gray-700">
-                    <Coins className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                    <span><strong>{Number(plan.credit_limit).toLocaleString()}</strong> credits / month</span>
-                  </div>
-
-                  <p className="mb-4 text-xs text-gray-500 leading-relaxed min-h-[2.5rem]">
-                    {plan.description || '—'}
-                  </p>
-
-                  <button
-                    onClick={() => openEditPkg(plan)}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                    Edit Plan
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Edit Package Modal */}
-          {editPkg && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-              <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-base font-semibold text-gray-900 capitalize">Edit {editPkg.name} Plan</h3>
-                  <button onClick={() => setEditPkg(null)} className="rounded-lg p-1.5 hover:bg-gray-100">
-                    <X className="h-4 w-4 text-gray-400" />
-                  </button>
-                </div>
-
-                <label className="mb-1 block text-xs font-medium text-gray-700">Monthly Price ($)</label>
-                <input
-                  type="number" min="0" step="0.01"
-                  value={editPrice}
-                  onChange={(e) => setEditPrice(e.target.value)}
-                  className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-                />
-
-                <label className="mb-1 block text-xs font-medium text-gray-700">Credit Limit (per month)</label>
-                <input
-                  type="number" min="0" step="1"
-                  value={editCredits}
-                  onChange={(e) => setEditCredits(e.target.value)}
-                  className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-                />
-
-                <label className="mb-1 block text-xs font-medium text-gray-700">Description</label>
-                <textarea
-                  rows={3}
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  className="mb-4 w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-                />
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setEditPkg(null)}
-                    className="flex-1 rounded-lg border border-gray-200 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={savePkgPlan}
-                    disabled={pkgSaving}
-                    className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-violet-600 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60"
-                  >
-                    <Save className="h-3.5 w-3.5" />
-                    {pkgSaving ? 'Saving…' : 'Save Plan'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          CREDITS TAB
-      ══════════════════════════════════════════════════════════════════════ */}
-      {tab === 'credits' && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-card">
-          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-900">Credit Transactions</h2>
-              <p className="text-xs text-gray-400">All top-ups and approval grants — {creditsTotal} total</p>
-            </div>
-            <button
-              onClick={() => fetchCreditTxs(creditsPage)}
-              className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  {['Business', 'Type', 'Amount', 'Notes', 'Admin', 'Date'].map((h) => (
-                    <th key={h} className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {creditsLoading ? (
-                  <tr>
-                    <td colSpan={6} className="py-16 text-center">
-                      <div className="mx-auto h-6 w-6 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
-                    </td>
-                  </tr>
-                ) : creditTxs.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="py-16 text-center">
-                      <CreditCard className="mx-auto mb-3 h-8 w-8 text-gray-300" />
-                      <p className="text-sm text-gray-400">No credit transactions yet.</p>
-                      <p className="text-xs text-gray-300 mt-1">Top-up a business or approve a new one to see transactions here.</p>
-                    </td>
-                  </tr>
-                ) : creditTxs.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-5 py-3.5">
-                      <p className="font-semibold text-gray-900">{tx.business_name}</p>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className={cn(
-                        'rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase',
-                        tx.type === 'topup'
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-violet-100 text-violet-700'
-                      )}>
-                        {tx.type === 'topup' ? 'Top-up' : 'Approval Grant'}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 font-semibold text-emerald-600">
-                      +{Number(tx.amount).toFixed(2)}
-                    </td>
-                    <td className="px-5 py-3.5 text-xs text-gray-500">{tx.notes || '—'}</td>
-                    <td className="px-5 py-3.5 text-xs text-gray-400">{tx.admin_email}</td>
-                    <td className="px-5 py-3.5 text-xs text-gray-400 whitespace-nowrap">{fmtDate(tx.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {creditsTotalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
-              <p className="text-xs text-gray-400">Page {creditsPage} of {creditsTotalPages}</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => fetchCreditTxs(creditsPage - 1)}
-                  disabled={creditsPage <= 1}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => fetchCreditTxs(creditsPage + 1)}
-                  disabled={creditsPage >= creditsTotalPages}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          AUDIT LOGS TAB
-      ══════════════════════════════════════════════════════════════════════ */}
-      {tab === 'audit' && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-card">
-          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-900">Audit Logs</h2>
-              <p className="text-xs text-gray-400">Every super admin action — {auditTotal} total entries</p>
-            </div>
-            <button
-              onClick={() => fetchAuditLogs(auditPage)}
-              className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  {['#', 'Action', 'Admin', 'Target Business', 'Date & Time'].map((h) => (
-                    <th key={h} className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {auditLoading ? (
-                  <tr>
-                    <td colSpan={5} className="py-16 text-center">
-                      <div className="mx-auto h-6 w-6 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
-                    </td>
-                  </tr>
-                ) : auditLogs.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-16 text-center">
-                      <ScrollText className="mx-auto mb-3 h-8 w-8 text-gray-300" />
-                      <p className="text-sm text-gray-400">No audit logs yet.</p>
-                      <p className="text-xs text-gray-300 mt-1">Actions like approvals, top-ups, and suspensions will appear here.</p>
-                    </td>
-                  </tr>
-                ) : auditLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-5 py-3.5 text-xs text-gray-400">#{log.id}</td>
-                    <td className="px-5 py-3.5 max-w-xs">
-                      <p className="text-xs text-gray-700 break-words leading-relaxed font-mono">{log.action}</p>
-                    </td>
-                    <td className="px-5 py-3.5 text-xs text-gray-500 whitespace-nowrap">{log.admin_email}</td>
-                    <td className="px-5 py-3.5 text-xs text-gray-500">
-                      {log.target_business_name ?? <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-5 py-3.5 text-xs text-gray-400 whitespace-nowrap">
-                      {new Date(log.created_at).toLocaleString(undefined, {
-                        year: 'numeric', month: 'short', day: 'numeric',
-                        hour: '2-digit', minute: '2-digit',
-                      })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {auditTotalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
-              <p className="text-xs text-gray-400">Page {auditPage} of {auditTotalPages} — {auditTotal} entries</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => fetchAuditLogs(auditPage - 1)}
-                  disabled={auditPage <= 1}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => fetchAuditLogs(auditPage + 1)}
-                  disabled={auditPage >= auditTotalPages}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Modals ─────────────────────────────────────────────────────────── */}
-      {approveBiz && (
-        <ApproveModal
-          biz={approveBiz}
-          onClose={() => setApproveBiz(null)}
-          onSave={handleApprove}
-        />
-      )}
-      {topUpBiz && (
-        <TopUpModal
-          biz={topUpBiz}
-          onClose={() => setTopUpBiz(null)}
-          onSave={handleTopUp}
-        />
-      )}
-      {extendBiz && (
-        <ExtendModal
-          biz={extendBiz}
-          onClose={() => setExtendBiz(null)}
-          onSave={handleExtend}
-        />
-      )}
     </MainLayout>
   );
 }
