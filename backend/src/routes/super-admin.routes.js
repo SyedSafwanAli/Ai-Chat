@@ -9,6 +9,10 @@ const {
   getPlatformSupport,
   getThreadMessages,
   replyToSupport,
+  getPackagePlans,
+  updatePackagePlan,
+  getCreditTransactions,
+  getAuditLogs,
 } = require('../controllers/platform.controller');
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -22,6 +26,20 @@ router.get('/stats', getPlatformStats);
 router.get  ('/businesses',              listBusinesses);
 router.patch('/businesses/:id/approve', approveBusiness);
 router.patch('/businesses/:id',          updateBusiness);
+
+// ── Package Plans ─────────────────────────────────────────────────────────────
+// GET /api/super-admin/packages
+// PUT /api/super-admin/packages/:name
+router.get('/packages',        getPackagePlans);
+router.put('/packages/:name',  updatePackagePlan);
+
+// ── Credit Transactions ───────────────────────────────────────────────────────
+// GET /api/super-admin/credit-transactions
+router.get('/credit-transactions', getCreditTransactions);
+
+// ── Audit Logs ────────────────────────────────────────────────────────────────
+// GET /api/super-admin/audit-logs
+router.get('/audit-logs', getAuditLogs);
 
 // ── Support ───────────────────────────────────────────────────────────────────
 // GET  /api/super-admin/support

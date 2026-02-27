@@ -182,6 +182,14 @@ async function approveBusiness(req, res, next) {
 
     await conn.commit();
 
+    // Log credit grant to credit_transactions
+    if (credits > 0) {
+      await pool.query(
+        "INSERT INTO credit_transactions (business_id, admin_id, type, amount, notes) VALUES (?, ?, 'approve_grant', ?, ?)",
+        [bizId, req.user.id, credits, `Approval grant — pkg=${pkg}`]
+      );
+    }
+
     await audit(
       req.user.id,
       `APPROVED #${bizId} (${biz.name}) pkg=${pkg} expiry=${package_expiry || 'none'} credits+${credits.toFixed(2)} (${prevBal.toFixed(2)}→${(prevBal + credits).toFixed(2)})`,
@@ -285,6 +293,17 @@ async function updateBusiness(req, res, next) {
     }
 
     await conn.commit();
+
+    // Log top-up to credit_transactions
+    if (top_up !== undefined) {
+      const amount = parseFloat(top_up);
+      if (!isNaN(amount) && amount > 0) {
+        await pool.query(
+          "INSERT INTO credit_transactions (business_id, admin_id, type, amount, notes) VALUES (?, ?, 'topup', ?, ?)",
+          [bizId, req.user.id, amount, `Manual top-up by admin`]
+        );
+      }
+    }
 
     if (auditParts.length) {
       await audit(req.user.id, `[${auditParts.join(' | ')}] on #${bizId} (${biz.name})`, bizId);
@@ -393,6 +412,127 @@ async function replyToSupport(req, res, next) {
   }
 }
 
+// ─── GET /api/super-admin/packages ────────────────────────────────────────────
+
+async function getPackagePlans(req, res, next) {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM package_plans ORDER BY FIELD(name,'trial','basic','pro')"
+    );
+    return send(res, { packages: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── PUT /api/super-admin/packages/:name ──────────────────────────────────────
+
+async function updatePackagePlan(req, res, next) {
+  try {
+    const { name } = req.params;
+    if (!['basic','pro','trial'].includes(name)) {
+      return fail(res, 'Invalid package name.', 400);
+    }
+    const { monthly_price, credit_limit, description } = req.body;
+
+    await pool.query(
+      `INSERT INTO package_plans (name, monthly_price, credit_limit, description)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         monthly_price = VALUES(monthly_price),
+         credit_limit  = VALUES(credit_limit),
+         description   = VALUES(description)`,
+      [name, parseFloat(monthly_price) || 0, parseInt(credit_limit) || 0, description || '']
+    );
+
+    const [[updated]] = await pool.query(
+      'SELECT * FROM package_plans WHERE name = ? LIMIT 1', [name]
+    );
+
+    await audit(req.user.id, `UPDATED package plan: ${name} price=$${monthly_price} credits=${credit_limit}`, null);
+
+    return send(res, { package: updated }, 'Package plan updated.');
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── GET /api/super-admin/credit-transactions ─────────────────────────────────
+
+async function getCreditTransactions(req, res, next) {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page)    || 1);
+    const limit  = Math.min(100, parseInt(req.query.limit) || 20);
+    const offset = (page - 1) * limit;
+
+    const [[{ total }]] = await pool.query(
+      'SELECT COUNT(*) AS total FROM credit_transactions'
+    );
+
+    const [rows] = await pool.query(
+      `SELECT ct.id, ct.type, ct.amount, ct.notes, ct.created_at,
+              b.name  AS business_name,
+              u.email AS admin_email
+       FROM   credit_transactions ct
+       LEFT JOIN businesses b ON b.id = ct.business_id
+       LEFT JOIN users      u ON u.id = ct.admin_id
+       ORDER  BY ct.created_at DESC
+       LIMIT  ? OFFSET ?`,
+      [limit, offset]
+    );
+
+    return send(res, {
+      transactions: rows,
+      pagination: {
+        total:      Number(total),
+        page,
+        limit,
+        totalPages: Math.ceil(Number(total) / limit),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── GET /api/super-admin/audit-logs ──────────────────────────────────────────
+
+async function getAuditLogs(req, res, next) {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page)    || 1);
+    const limit  = Math.min(100, parseInt(req.query.limit) || 20);
+    const offset = (page - 1) * limit;
+
+    const [[{ total }]] = await pool.query(
+      'SELECT COUNT(*) AS total FROM super_admin_logs'
+    );
+
+    const [rows] = await pool.query(
+      `SELECT sal.id, sal.action, sal.created_at,
+              u.email AS admin_email,
+              b.name  AS target_business_name
+       FROM   super_admin_logs sal
+       LEFT JOIN users      u ON u.id  = sal.admin_id
+       LEFT JOIN businesses b ON b.id  = sal.target_business_id
+       ORDER  BY sal.created_at DESC
+       LIMIT  ? OFFSET ?`,
+      [limit, offset]
+    );
+
+    return send(res, {
+      logs: rows,
+      pagination: {
+        total:      Number(total),
+        page,
+        limit,
+        totalPages: Math.ceil(Number(total) / limit),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getPlatformStats,
   listBusinesses,
@@ -401,4 +541,8 @@ module.exports = {
   getPlatformSupport,
   getThreadMessages,
   replyToSupport,
+  getPackagePlans,
+  updatePackagePlan,
+  getCreditTransactions,
+  getAuditLogs,
 };

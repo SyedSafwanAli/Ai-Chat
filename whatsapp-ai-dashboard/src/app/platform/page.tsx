@@ -29,6 +29,11 @@ import {
   RefreshCw,
   X,
   ShieldCheck,
+  Package,
+  CreditCard,
+  ScrollText,
+  Pencil,
+  Save,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -72,6 +77,32 @@ interface SupportThread {
   last_sender: 'user' | 'admin';
   last_message_at: string;
   unread_count: number;
+}
+
+interface PackagePlan {
+  id: number;
+  name: 'basic' | 'pro' | 'trial';
+  monthly_price: number;
+  credit_limit: number;
+  description: string;
+}
+
+interface CreditTx {
+  id: number;
+  business_name: string;
+  admin_email: string;
+  type: 'topup' | 'approve_grant';
+  amount: number;
+  notes: string;
+  created_at: string;
+}
+
+interface AuditLog {
+  id: number;
+  action: string;
+  admin_email: string;
+  target_business_name: string | null;
+  created_at: string;
 }
 
 interface SupportMessage {
@@ -503,7 +534,7 @@ export default function PlatformPage() {
   }, [user, router]);
 
   // ── UI tab ────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState<'businesses' | 'support'>('businesses');
+  const [tab, setTab] = useState<'businesses' | 'packages' | 'credits' | 'audit' | 'support'>('businesses');
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   const [stats, setStats] = useState<PlatformStats | null>(null);
@@ -530,6 +561,28 @@ export default function PlatformPage() {
   const [replyText,       setReplyText]       = useState('');
   const [replySending,    setReplySending]    = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // ── Packages ──────────────────────────────────────────────────────────────
+  const [packages,    setPackages]    = useState<PackagePlan[]>([]);
+  const [editPkg,     setEditPkg]     = useState<PackagePlan | null>(null);
+  const [pkgSaving,   setPkgSaving]   = useState(false);
+  const [editPrice,   setEditPrice]   = useState('');
+  const [editCredits, setEditCredits] = useState('');
+  const [editDesc,    setEditDesc]    = useState('');
+
+  // ── Credits Transactions ──────────────────────────────────────────────────
+  const [creditTxs,    setCreditTxs]    = useState<CreditTx[]>([]);
+  const [creditsPage,  setCreditsPage]  = useState(1);
+  const [creditsTotal, setCreditsTotal] = useState(0);
+  const [creditsTotalPages, setCreditsTotalPages] = useState(1);
+  const [creditsLoading, setCreditsLoading] = useState(false);
+
+  // ── Audit Logs ────────────────────────────────────────────────────────────
+  const [auditLogs,   setAuditLogs]   = useState<AuditLog[]>([]);
+  const [auditPage,   setAuditPage]   = useState(1);
+  const [auditTotal,  setAuditTotal]  = useState(0);
+  const [auditTotalPages, setAuditTotalPages] = useState(1);
+  const [auditLoading, setAuditLoading] = useState(false);
 
   // ── Fetch helpers ─────────────────────────────────────────────────────────
 
@@ -576,13 +629,52 @@ export default function PlatformPage() {
       .finally(() => setMsgsLoading(false));
   }, []);
 
+  const fetchPackages = useCallback(() => {
+    api.get<{ packages: PackagePlan[] }>('/super-admin/packages')
+      .then(({ packages: pkgs }) => setPackages(pkgs))
+      .catch(() => {});
+  }, []);
+
+  const fetchCreditTxs = useCallback((page = 1) => {
+    setCreditsLoading(true);
+    api.get<{ transactions: CreditTx[]; pagination: { total: number; totalPages: number } }>(
+      `/super-admin/credit-transactions?page=${page}&limit=15`
+    )
+      .then(({ transactions, pagination: pg }) => {
+        setCreditTxs(transactions);
+        setCreditsTotal(pg.total);
+        setCreditsTotalPages(pg.totalPages);
+        setCreditsPage(page);
+      })
+      .catch(() => {})
+      .finally(() => setCreditsLoading(false));
+  }, []);
+
+  const fetchAuditLogs = useCallback((page = 1) => {
+    setAuditLoading(true);
+    api.get<{ logs: AuditLog[]; pagination: { total: number; totalPages: number } }>(
+      `/super-admin/audit-logs?page=${page}&limit=20`
+    )
+      .then(({ logs, pagination: pg }) => {
+        setAuditLogs(logs);
+        setAuditTotal(pg.total);
+        setAuditTotalPages(pg.totalPages);
+        setAuditPage(page);
+      })
+      .catch(() => {})
+      .finally(() => setAuditLoading(false));
+  }, []);
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
   useEffect(() => { fetchBusinesses(1); }, [fetchBusinesses]);
   useEffect(() => {
-    if (tab === 'support') fetchThreads();
-  }, [tab, fetchThreads]);
+    if (tab === 'support')  fetchThreads();
+    if (tab === 'packages') fetchPackages();
+    if (tab === 'credits')  fetchCreditTxs(1);
+    if (tab === 'audit')    fetchAuditLogs(1);
+  }, [tab, fetchThreads, fetchPackages, fetchCreditTxs, fetchAuditLogs]);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -637,6 +729,31 @@ export default function PlatformPage() {
       fetchThreads(); // refresh unread counts
     } finally {
       setReplySending(false);
+    }
+  }
+
+  // ── Package edit helpers ──────────────────────────────────────────────────
+
+  function openEditPkg(plan: PackagePlan) {
+    setEditPkg(plan);
+    setEditPrice(String(plan.monthly_price));
+    setEditCredits(String(plan.credit_limit));
+    setEditDesc(plan.description || '');
+  }
+
+  async function savePkgPlan() {
+    if (!editPkg) return;
+    setPkgSaving(true);
+    try {
+      await api.put(`/super-admin/packages/${editPkg.name}`, {
+        monthly_price: parseFloat(editPrice) || 0,
+        credit_limit:  parseInt(editCredits)  || 0,
+        description:   editDesc,
+      });
+      setEditPkg(null);
+      fetchPackages();
+    } finally {
+      setPkgSaving(false);
     }
   }
 
@@ -696,21 +813,27 @@ export default function PlatformPage() {
       </div>
 
       {/* ── Tab bar ────────────────────────────────────────────────────────── */}
-      <div className="mb-5 flex items-center gap-3">
-        <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
-          {(['businesses', 'support'] as const).map((t) => (
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap gap-1 rounded-xl bg-gray-100 p-1">
+          {([
+            { key: 'businesses', label: 'Businesses' },
+            { key: 'packages',   label: 'Packages'   },
+            { key: 'credits',    label: 'Credits'     },
+            { key: 'audit',      label: 'Audit Logs'  },
+            { key: 'support',    label: 'Support'     },
+          ] as const).map(({ key, label }) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
+              key={key}
+              onClick={() => setTab(key)}
               className={cn(
-                'relative rounded-lg px-5 py-2 text-sm font-medium transition-colors',
-                tab === t
+                'relative rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+                tab === key
                   ? 'bg-white text-gray-900 shadow-sm'
                   : 'text-gray-500 hover:text-gray-700'
               )}
             >
-              {t === 'businesses' ? 'Businesses' : 'Support Threads'}
-              {t === 'support' && totalUnread > 0 && (
+              {label}
+              {key === 'support' && totalUnread > 0 && (
                 <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white">
                   {totalUnread > 99 ? '99+' : totalUnread}
                 </span>
@@ -1088,6 +1211,315 @@ export default function PlatformPage() {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          PACKAGES TAB
+      ══════════════════════════════════════════════════════════════════════ */}
+      {tab === 'packages' && (
+        <div>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Package Plans</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Edit pricing, credit limits, and descriptions for each plan tier.</p>
+            </div>
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-3">
+            {packages.length === 0 ? (
+              <div className="col-span-3 py-16 text-center text-sm text-gray-400">
+                <Package className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+                No package plans found. Import migrate-v4.sql to seed default plans.
+              </div>
+            ) : packages.map((plan) => {
+              const colors = {
+                trial: { border: 'border-amber-200',  bg: 'bg-amber-50',   badge: 'bg-amber-100 text-amber-700',   icon: 'bg-amber-100 text-amber-600'   },
+                basic:  { border: 'border-blue-200',   bg: 'bg-blue-50',    badge: 'bg-blue-100 text-blue-700',     icon: 'bg-blue-100 text-blue-600'     },
+                pro:    { border: 'border-violet-200', bg: 'bg-violet-50',  badge: 'bg-violet-100 text-violet-700', icon: 'bg-violet-100 text-violet-600' },
+              }[plan.name];
+
+              return (
+                <div key={plan.name} className={cn('rounded-xl border-2 bg-white p-5 shadow-sm', colors.border)}>
+                  <div className="mb-4 flex items-start justify-between">
+                    <div>
+                      <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide', colors.badge)}>
+                        {plan.name}
+                      </span>
+                      <p className="mt-3 text-2xl font-bold text-gray-900">
+                        ${Number(plan.monthly_price).toFixed(2)}
+                        <span className="text-sm font-normal text-gray-400">/mo</span>
+                      </p>
+                    </div>
+                    <div className={cn('rounded-xl p-2.5', colors.icon)}>
+                      <Package className="h-5 w-5" />
+                    </div>
+                  </div>
+
+                  <div className="mb-3 flex items-center gap-2 text-sm text-gray-700">
+                    <Coins className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                    <span><strong>{Number(plan.credit_limit).toLocaleString()}</strong> credits / month</span>
+                  </div>
+
+                  <p className="mb-4 text-xs text-gray-500 leading-relaxed min-h-[2.5rem]">
+                    {plan.description || '—'}
+                  </p>
+
+                  <button
+                    onClick={() => openEditPkg(plan)}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit Plan
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Edit Package Modal */}
+          {editPkg && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+              <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-gray-900 capitalize">Edit {editPkg.name} Plan</h3>
+                  <button onClick={() => setEditPkg(null)} className="rounded-lg p-1.5 hover:bg-gray-100">
+                    <X className="h-4 w-4 text-gray-400" />
+                  </button>
+                </div>
+
+                <label className="mb-1 block text-xs font-medium text-gray-700">Monthly Price ($)</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(e.target.value)}
+                  className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                />
+
+                <label className="mb-1 block text-xs font-medium text-gray-700">Credit Limit (per month)</label>
+                <input
+                  type="number" min="0" step="1"
+                  value={editCredits}
+                  onChange={(e) => setEditCredits(e.target.value)}
+                  className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                />
+
+                <label className="mb-1 block text-xs font-medium text-gray-700">Description</label>
+                <textarea
+                  rows={3}
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="mb-4 w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                />
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditPkg(null)}
+                    className="flex-1 rounded-lg border border-gray-200 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={savePkgPlan}
+                    disabled={pkgSaving}
+                    className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-violet-600 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {pkgSaving ? 'Saving…' : 'Save Plan'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          CREDITS TAB
+      ══════════════════════════════════════════════════════════════════════ */}
+      {tab === 'credits' && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-card">
+          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Credit Transactions</h2>
+              <p className="text-xs text-gray-400">All top-ups and approval grants — {creditsTotal} total</p>
+            </div>
+            <button
+              onClick={() => fetchCreditTxs(creditsPage)}
+              className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  {['Business', 'Type', 'Amount', 'Notes', 'Admin', 'Date'].map((h) => (
+                    <th key={h} className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {creditsLoading ? (
+                  <tr>
+                    <td colSpan={6} className="py-16 text-center">
+                      <div className="mx-auto h-6 w-6 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
+                    </td>
+                  </tr>
+                ) : creditTxs.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-16 text-center">
+                      <CreditCard className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+                      <p className="text-sm text-gray-400">No credit transactions yet.</p>
+                      <p className="text-xs text-gray-300 mt-1">Top-up a business or approve a new one to see transactions here.</p>
+                    </td>
+                  </tr>
+                ) : creditTxs.map((tx) => (
+                  <tr key={tx.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-5 py-3.5">
+                      <p className="font-semibold text-gray-900">{tx.business_name}</p>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <span className={cn(
+                        'rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase',
+                        tx.type === 'topup'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-violet-100 text-violet-700'
+                      )}>
+                        {tx.type === 'topup' ? 'Top-up' : 'Approval Grant'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3.5 font-semibold text-emerald-600">
+                      +{Number(tx.amount).toFixed(2)}
+                    </td>
+                    <td className="px-5 py-3.5 text-xs text-gray-500">{tx.notes || '—'}</td>
+                    <td className="px-5 py-3.5 text-xs text-gray-400">{tx.admin_email}</td>
+                    <td className="px-5 py-3.5 text-xs text-gray-400 whitespace-nowrap">{fmtDate(tx.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {creditsTotalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
+              <p className="text-xs text-gray-400">Page {creditsPage} of {creditsTotalPages}</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => fetchCreditTxs(creditsPage - 1)}
+                  disabled={creditsPage <= 1}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => fetchCreditTxs(creditsPage + 1)}
+                  disabled={creditsPage >= creditsTotalPages}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          AUDIT LOGS TAB
+      ══════════════════════════════════════════════════════════════════════ */}
+      {tab === 'audit' && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-card">
+          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Audit Logs</h2>
+              <p className="text-xs text-gray-400">Every super admin action — {auditTotal} total entries</p>
+            </div>
+            <button
+              onClick={() => fetchAuditLogs(auditPage)}
+              className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  {['#', 'Action', 'Admin', 'Target Business', 'Date & Time'].map((h) => (
+                    <th key={h} className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {auditLoading ? (
+                  <tr>
+                    <td colSpan={5} className="py-16 text-center">
+                      <div className="mx-auto h-6 w-6 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
+                    </td>
+                  </tr>
+                ) : auditLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-16 text-center">
+                      <ScrollText className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+                      <p className="text-sm text-gray-400">No audit logs yet.</p>
+                      <p className="text-xs text-gray-300 mt-1">Actions like approvals, top-ups, and suspensions will appear here.</p>
+                    </td>
+                  </tr>
+                ) : auditLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-5 py-3.5 text-xs text-gray-400">#{log.id}</td>
+                    <td className="px-5 py-3.5 max-w-xs">
+                      <p className="text-xs text-gray-700 break-words leading-relaxed font-mono">{log.action}</p>
+                    </td>
+                    <td className="px-5 py-3.5 text-xs text-gray-500 whitespace-nowrap">{log.admin_email}</td>
+                    <td className="px-5 py-3.5 text-xs text-gray-500">
+                      {log.target_business_name ?? <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-5 py-3.5 text-xs text-gray-400 whitespace-nowrap">
+                      {new Date(log.created_at).toLocaleString(undefined, {
+                        year: 'numeric', month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {auditTotalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
+              <p className="text-xs text-gray-400">Page {auditPage} of {auditTotalPages} — {auditTotal} entries</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => fetchAuditLogs(auditPage - 1)}
+                  disabled={auditPage <= 1}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => fetchAuditLogs(auditPage + 1)}
+                  disabled={auditPage >= auditTotalPages}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
