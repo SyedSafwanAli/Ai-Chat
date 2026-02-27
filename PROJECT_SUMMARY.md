@@ -670,6 +670,65 @@ NEXT_PUBLIC_API_URL=http://localhost:5000/api
 
 ---
 
+## Pages — Role-wise Breakdown
+
+### ✅ Manager / Admin Role — 7 Pages Built
+
+| # | Page | Route | Status |
+|---|------|-------|--------|
+| 1 | Dashboard | `/` | ✅ Complete |
+| 2 | Conversations | `/conversations` | ✅ Complete |
+| 3 | Leads | `/leads` | ✅ Complete |
+| 4 | AI Usage | `/ai-usage` | ✅ Complete |
+| 5 | Business Settings | `/business-settings` | ✅ Complete |
+| 6 | Support | `/support` | ✅ Complete |
+| 7 | Account | `/account` | ✅ Complete |
+
+**Auth pages (all roles):**
+- Login `/login` ✅
+- Signup `/signup` ✅
+
+---
+
+### ✅ Super Admin Role — 1 Page Built
+
+| # | Page | Route | Status |
+|---|------|-------|--------|
+| 1 | Platform Admin | `/platform` | ✅ Complete |
+
+Platform Admin has 2 internal tabs: Businesses + Support — both fully functional.
+
+---
+
+### 🔲 Remaining Pages — To Be Built (Future Scope)
+
+#### For Manager / Admin Role
+
+| # | Page | Route | Description |
+|---|------|-------|-------------|
+| 1 | Billing & Subscription | `/billing` | View current package, expiry date, credit balance, payment history. Upgrade/renew package buttons. |
+| 2 | Broadcast Messages | `/broadcast` | Send a single WhatsApp message to multiple customers at once — bulk outreach. |
+| 3 | Team Members | `/team` | Invite multiple managers to same business, set permissions, remove members. |
+| 4 | Contacts / CRM | `/contacts` | Full customer directory — all unique phone numbers, chat history, add custom notes/tags per contact. |
+| 5 | Bot Configuration | `/bot` | Visual editor to manage AI rules — add custom triggers, edit reply templates, set fallback message. |
+| 6 | Notifications Settings | `/notifications` | Configure alerts — email/webhook when new hot lead, daily summary, unread support replies. |
+| 7 | Reports & Analytics | `/reports` | Detailed analytics — busiest hours, response time, lead conversion funnel, downloadable CSV export. |
+| 8 | Appointment Calendar | `/appointments` | View/manage bookings if bot captures appointment date/time. Calendar view + list view. |
+| 9 | Quick Replies | `/quick-replies` | Save canned reply templates, use them in Conversations page with one click. |
+| 10 | Integrations | `/integrations` | Connect Google Calendar, Zapier, CRM tools (HubSpot, Pipedrive) via webhooks. |
+
+#### For Super Admin Role
+
+| # | Page | Route | Description |
+|---|------|-------|-------------|
+| 1 | Invoice Management | `/platform/invoices` | Generate and track invoices per business, download PDF receipts. |
+| 2 | Package Pricing | `/platform/pricing` | Manage package tiers (basic/pro/trial) — set prices, credit limits, feature access per tier. |
+| 3 | System Logs | `/platform/logs` | Full super_admin_logs viewer — filter by action type, business, date range. |
+| 4 | Announcements | `/platform/announcements` | Post system-wide notices — all businesses see them on login or dashboard. |
+| 5 | Global Analytics | `/platform/analytics` | Platform-wide charts — total revenue, MRR, active businesses over time, churn rate. |
+
+---
+
 ## Complete Feature Log
 
 | # | Feature | Description |
