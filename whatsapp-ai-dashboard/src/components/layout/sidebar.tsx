@@ -40,6 +40,7 @@ const navItems: NavItem[] = [
   { label: "Bot Overview",       href: "/bot",               icon: Bot             },
   { label: "Quick Replies",      href: "/quick-replies",     icon: Reply           },
   { label: "Reports",            href: "/reports",           icon: BarChart3       },
+  { label: "Billing",            href: "/billing",           icon: CreditCard      },
   { label: "Business Settings",  href: "/business-settings", icon: Settings        },
   { label: "Support",            href: "/support",           icon: LifeBuoy        },
   { label: "Account",            href: "/account",           icon: UserCircle      },

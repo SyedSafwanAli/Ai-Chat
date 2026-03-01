@@ -14,6 +14,7 @@ const supportRoutes           = require('./routes/support.routes');
 const adminRoutes             = require('./routes/admin.routes');
 const superAdminRoutes        = require('./routes/super-admin.routes');
 const quickRepliesRoutes      = require('./routes/quick-replies.routes');
+const paymentsRoutes          = require('./routes/payments.routes');
 const { listLeads }           = require('./controllers/conversation.controller');
 const { getNotifications }    = require('./controllers/notifications.controller');
 
@@ -113,6 +114,9 @@ app.use('/api/webhook',          webhookRoutes);
 
 // ─── Notifications (JWT required, no package check) ───────────────────────────
 app.get('/api/notifications', authenticate, getNotifications);
+
+// ─── Payments (webhook: public; billing-info/create: JWT only, no pkg check) ──
+app.use('/api/payments', paymentsRoutes);
 
 // ─── Support (JWT required, no package check) ─────────────────────────────────
 app.use('/api/support', authenticate, supportRoutes);
