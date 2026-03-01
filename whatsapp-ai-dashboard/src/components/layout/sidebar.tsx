@@ -53,6 +53,7 @@ const adminNavItems: NavItem[] = [
   { label: "Audit Logs",    href: "/platform/audit",         icon: ScrollText      },
   { label: "Support",       href: "/platform/support",       icon: LifeBuoy        },
   { label: "Announcements", href: "/platform/announcements", icon: Megaphone       },
+  { label: "Account",       href: "/platform/account",       icon: UserCircle      },
   { label: "Analytics",     href: "/platform/analytics",     icon: BarChart3       },
 ];
 
