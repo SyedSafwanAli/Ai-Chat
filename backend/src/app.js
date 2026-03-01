@@ -5,15 +5,17 @@ const cors     = require('cors');
 const helmet   = require('helmet');
 const morgan   = require('morgan');
 
-const authRoutes         = require('./routes/auth.routes');
-const dashboardRoutes    = require('./routes/dashboard.routes');
-const conversationRoutes = require('./routes/conversation.routes');
-const settingsRoutes     = require('./routes/settings.routes');
-const webhookRoutes      = require('./routes/webhook.routes');
-const supportRoutes      = require('./routes/support.routes');
-const adminRoutes        = require('./routes/admin.routes');
-const superAdminRoutes   = require('./routes/super-admin.routes');
-const { listLeads }      = require('./controllers/conversation.controller');
+const authRoutes              = require('./routes/auth.routes');
+const dashboardRoutes         = require('./routes/dashboard.routes');
+const conversationRoutes      = require('./routes/conversation.routes');
+const settingsRoutes          = require('./routes/settings.routes');
+const webhookRoutes           = require('./routes/webhook.routes');
+const supportRoutes           = require('./routes/support.routes');
+const adminRoutes             = require('./routes/admin.routes');
+const superAdminRoutes        = require('./routes/super-admin.routes');
+const quickRepliesRoutes      = require('./routes/quick-replies.routes');
+const { listLeads }           = require('./controllers/conversation.controller');
+const { getNotifications }    = require('./controllers/notifications.controller');
 
 const { authenticate, requireAdmin, requireSuperAdmin } = require('./middleware/authMiddleware');
 const checkPackageAccess = require('./middleware/checkPackageAccess');
@@ -109,6 +111,9 @@ app.use('/api/auth',        authRoutes);
 app.use('/api/webhook/whatsapp', webhookLimiter);
 app.use('/api/webhook',          webhookRoutes);
 
+// ─── Notifications (JWT required, no package check) ───────────────────────────
+app.get('/api/notifications', authenticate, getNotifications);
+
 // ─── Support (JWT required, no package check) ─────────────────────────────────
 app.use('/api/support', authenticate, supportRoutes);
 
@@ -119,10 +124,11 @@ app.use('/api/super-admin', authenticate, requireSuperAdmin, superAdminRoutes);
 app.use('/api/admin', authenticate, requireAdmin, adminRoutes);
 
 // ─── Protected business routes (JWT + active package required) ────────────────
-app.use('/api/dashboard',     authenticate, checkPackageAccess, dashboardRoutes);
-app.use('/api/conversations', authenticate, checkPackageAccess, conversationRoutes);
-app.get('/api/leads',         authenticate, checkPackageAccess, listLeads);
-app.use('/api',               authenticate, checkPackageAccess, settingsRoutes);
+app.use('/api/dashboard',      authenticate, checkPackageAccess, dashboardRoutes);
+app.use('/api/conversations',  authenticate, checkPackageAccess, conversationRoutes);
+app.get('/api/leads',          authenticate, checkPackageAccess, listLeads);
+app.use('/api/quick-replies',  authenticate, checkPackageAccess, quickRepliesRoutes);
+app.use('/api',                authenticate, checkPackageAccess, settingsRoutes);
 
 // ─── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {

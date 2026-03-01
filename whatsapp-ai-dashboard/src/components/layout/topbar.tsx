@@ -1,10 +1,14 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, Search, Menu, LifeBuoy, ChevronDown, UserCircle, LogOut } from "lucide-react";
+import {
+  Bell, Search, Menu, LifeBuoy, ChevronDown, UserCircle, LogOut,
+  Users, MessageSquare, Building2, X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { api } from "@/lib/api";
 
 interface TopbarProps {
   sidebarCollapsed: boolean;
@@ -13,30 +17,52 @@ interface TopbarProps {
   pageDescription?: string;
 }
 
+interface NotifItem {
+  type: string;
+  count: number;
+  label: string;
+  href: string;
+}
+
+interface NotifData {
+  items: NotifItem[];
+  total: number;
+}
+
+const NOTIF_ICONS: Record<string, React.ElementType> = {
+  hot_leads:           Users,
+  unread_support:      MessageSquare,
+  pending_businesses:  Building2,
+};
+
 export function Topbar({
   sidebarCollapsed,
   onMobileMenuToggle,
   pageTitle = "Dashboard",
   pageDescription,
 }: TopbarProps) {
-  const router       = useRouter();
+  const router           = useRouter();
   const { user, logout } = useAuth();
 
   const [searchQuery,  setSearchQuery]  = useState("");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [bellOpen,     setBellOpen]     = useState(false);
+  const [notifs,       setNotifs]       = useState<NotifData>({ items: [], total: 0 });
+  const [notifsLoaded, setNotifsLoaded] = useState(false);
+
   const menuRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLDivElement>(null);
 
   const displayName = user?.role === "super_admin"
     ? "Super Admin"
     : user?.business_name || user?.email?.split("@")[0] || "Business";
-  const initials = displayName.slice(0, 2).toUpperCase();
-
+  const initials  = displayName.slice(0, 2).toUpperCase();
   const roleLabel =
     user?.role === "super_admin" ? "Super Admin" :
     user?.role === "admin"       ? "Admin" :
     "Manager";
 
-  // Close dropdown on outside click
+  // Close user menu on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -46,6 +72,36 @@ export function Topbar({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
+
+  // Close bell on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
+        setBellOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const fetchNotifs = useCallback(() => {
+    api.get<NotifData>('/notifications')
+      .then((data) => { setNotifs(data); setNotifsLoaded(true); })
+      .catch(() => {});
+  }, []);
+
+  // Fetch notifications on mount + every 60 seconds
+  useEffect(() => {
+    if (!user) return;
+    fetchNotifs();
+    const interval = setInterval(fetchNotifs, 60_000);
+    return () => clearInterval(interval);
+  }, [user, fetchNotifs]);
+
+  const handleBellToggle = () => {
+    setBellOpen((o) => !o);
+    if (!bellOpen) fetchNotifs(); // refresh on open
+  };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,14 +158,83 @@ export function Topbar({
       {/* Right: actions */}
       <div className="flex items-center gap-1">
 
-        {/* Bell — navigate to leads */}
-        <button
-          onClick={() => router.push("/leads")}
-          className="relative rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
-          title="View Leads"
-        >
-          <Bell className="h-5 w-5" />
-        </button>
+        {/* Bell — notification dropdown */}
+        <div ref={bellRef} className="relative">
+          <button
+            onClick={handleBellToggle}
+            className="relative rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+            title="Notifications"
+          >
+            <Bell className="h-5 w-5" />
+            {notifs.total > 0 && (
+              <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                {notifs.total > 9 ? '9+' : notifs.total}
+              </span>
+            )}
+          </button>
+
+          {/* Notification Dropdown */}
+          {bellOpen && (
+            <div className="absolute right-0 top-full mt-1 w-72 rounded-xl border border-gray-200 bg-white shadow-xl z-50 overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+                <p className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Notifications</p>
+                <button onClick={() => setBellOpen(false)} className="rounded-md p-0.5 hover:bg-gray-200 transition-colors">
+                  <X className="h-3.5 w-3.5 text-gray-400" />
+                </button>
+              </div>
+
+              {/* Items */}
+              {!notifsLoaded ? (
+                <div className="py-6 flex items-center justify-center">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                </div>
+              ) : notifs.items.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-gray-300">
+                  <Bell className="h-7 w-7 mb-2 opacity-50" />
+                  <p className="text-xs text-gray-400 font-medium">All caught up!</p>
+                  <p className="text-[11px] text-gray-300 mt-0.5">No new notifications</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {notifs.items.map((item) => {
+                    const Icon = NOTIF_ICONS[item.type] ?? Bell;
+                    return (
+                      <button
+                        key={item.type}
+                        onClick={() => { setBellOpen(false); router.push(item.href); }}
+                        className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-blue-50 transition-colors"
+                      >
+                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-red-50">
+                          <Icon className="h-4 w-4 text-red-500" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-800 leading-snug">{item.label}</p>
+                          <p className="text-[11px] text-gray-400 mt-0.5">Tap to view →</p>
+                        </div>
+                        <span className="flex-shrink-0 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                          {item.count > 9 ? '9+' : item.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Footer */}
+              {notifs.items.length > 0 && (
+                <div className="border-t border-gray-100 px-4 py-2.5">
+                  <button
+                    onClick={() => { setBellOpen(false); fetchNotifs(); }}
+                    className="text-[11px] text-blue-600 hover:text-blue-700 font-medium transition-colors"
+                  >
+                    Refresh notifications
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Help → Support page */}
         <button

@@ -23,6 +23,7 @@ import {
   ScrollText,
   Megaphone,
   BarChart3,
+  Reply,
 } from "lucide-react";
 
 interface NavItem {
@@ -36,6 +37,9 @@ const navItems: NavItem[] = [
   { label: "Conversations",      href: "/conversations",     icon: MessageSquare   },
   { label: "Leads",              href: "/leads",             icon: Users           },
   { label: "AI Usage",           href: "/ai-usage",          icon: Zap             },
+  { label: "Bot Overview",       href: "/bot",               icon: Bot             },
+  { label: "Quick Replies",      href: "/quick-replies",     icon: Reply           },
+  { label: "Reports",            href: "/reports",           icon: BarChart3       },
   { label: "Business Settings",  href: "/business-settings", icon: Settings        },
   { label: "Support",            href: "/support",           icon: LifeBuoy        },
   { label: "Account",            href: "/account",           icon: UserCircle      },
