@@ -61,7 +61,7 @@ async function getNotifications(req, res, next) {
       const [[{ hot_leads }]] = await pool.query(
         `SELECT COUNT(*) AS hot_leads
          FROM conversations
-         WHERE business_id = ? AND lead_status = 'hot_lead' AND contacted = 0`,
+         WHERE business_id = ? AND lead_status = 'hot' AND contacted = 0`,
         [bizId]
       );
 
