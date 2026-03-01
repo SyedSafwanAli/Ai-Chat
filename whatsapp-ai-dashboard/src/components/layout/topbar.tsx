@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Bell, Search, Menu, LifeBuoy, ChevronDown, UserCircle, LogOut,
+  Bell, Search, Menu, ChevronDown, UserCircle, LogOut,
   Users, MessageSquare, Building2, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -87,7 +87,7 @@ export function Topbar({
   const fetchNotifs = useCallback(() => {
     api.get<NotifData>('/notifications')
       .then((data) => { setNotifs(data); setNotifsLoaded(true); })
-      .catch(() => {});
+      .catch(() => { setNotifsLoaded(true); });
   }, []);
 
   // Fetch notifications on mount + every 60 seconds
@@ -236,15 +236,6 @@ export function Topbar({
           )}
         </div>
 
-        {/* Help → Support page */}
-        <button
-          onClick={() => router.push("/support")}
-          className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
-          title="Support"
-        >
-          <LifeBuoy className="h-5 w-5" />
-        </button>
-
         {/* Divider */}
         <div className="h-6 w-px bg-gray-200 mx-1" />
 
@@ -280,13 +271,6 @@ export function Topbar({
               >
                 <UserCircle className="h-3.5 w-3.5 text-gray-400" />
                 Account & Password
-              </button>
-              <button
-                onClick={() => { setUserMenuOpen(false); router.push("/support"); }}
-                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-xs text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                <LifeBuoy className="h-3.5 w-3.5 text-gray-400" />
-                Support
               </button>
               <div className="border-t border-gray-100" />
               <button
